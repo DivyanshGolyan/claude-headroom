@@ -23,16 +23,24 @@ Estimated exhaustion times round down to five minutes. Spare rounds down to five
 
 ## Continuity and coverage
 
-Keep observations through sleep and failed requests. Cumulative usage captures consumption between observations; interpolate an anchor at the lookback boundary. Across a long interruption this assumes uniform consumption over the missing interval, so the actual timing of a burst is unknown. A reset or a decreasing counter starts a fresh rate history for that quota window. Rates from an earlier window are not used as priors.
+Keep observations through sleep and failed requests while the app remains running. Cumulative usage captures consumption between observations; interpolate an anchor at the lookback boundary. Across a long interruption this assumes uniform consumption over the missing interval, so the actual timing of a burst is unknown. A reset or a decreasing counter starts a fresh rate history for that quota window. Rates from an earlier window are not used as priors.
 
 Five-hour quota drives spare estimates. Active, unscoped weekly limits and active Opus weekly limits also participate in outage detection. Other model-specific limits, such as Sonnet or Fable, are excluded. This policy suits Opus-heavy work; it is not a complete forecast for every model. Weekly counters need their own five minutes of observations, but a counter already at 100% warns immediately. Overlapping outages merge into the earliest continuous outage; the displayed end is when all overlapping limits have reset.
 
 A null five-hour window, or zero utilization with no reset time, is treated as Ready. An absent required field, malformed reset, or invalid percentage is an error. The no-active-window interpretation is defensive handling of that response shape, not a guarantee about every server response.
 
+## Clock changes
+
+Request spacing, retries, rate-limit cooldowns, and data age use Swift's `ContinuousClock`. It measures elapsed time through sleep and ignores changes to the system clock. Quota reset timestamps remain absolute calendar dates.
+
+Live observations share one calendar anchor, preferably the response's HTTP Date header. Each observation advances that anchor by continuous elapsed time. This keeps consumption rates and history retention stable when the local clock changes. If the header is absent, the first response's local date supplies a best-effort anchor. The first subsequent server date, or a server date differing from the projected anchor by more than 30 seconds, starts fresh observations. Smaller server jitter leaves the anchor unchanged. The 30-second tolerance is a drift policy, not a bound guaranteed by the network timeout.
+
+A numeric Retry-After becomes an elapsed duration directly. An HTTP-date Retry-After is compared with the response's server date, falling back to the local date captured at receipt. Later clock changes cannot shorten or extend that cooldown. Without a server date, an initially incorrect local clock can still affect this conversion and the quota reset horizon.
+
 ## Freshness and storage
 
 Requests time out after 25 seconds overall. Failures back off from one minute to 15 minutes. HTTP 429 also respects Retry-After. Timer, wake, and manual requests share a 15-second minimum interval and never overlap. Manual refresh respects the same server rate-limit cooldown. Signing out is shown immediately. Other failures retain the previous forecast, dim it after three minutes, and show No data after ten. A separate UI check each minute updates freshness during backoff.
 
-Only percentages, quota identifiers, observation dates, and reset dates are saved in `~/Library/Application Support/Headroom/history.json`, with owner-only file permissions. History retains about one hour and an earlier anchor, capped at the latest 256 consecutive observations. Restored cache files larger than 256 KiB are ignored. If either bound removes older evidence, forecasting uses the available recent observations and may need to warm up again. Credentials stay in Keychain and transient process memory. Headroom does not start Claude, alter credentials, or refresh tokens. There is no analytics service.
+Only percentages, quota identifiers, observation dates, and reset dates are saved in `~/Library/Application Support/Headroom/history.json`, with owner-only file permissions. In memory, history retains about one hour and an earlier anchor, capped at the latest 256 consecutive observations. The disk cache contains only the latest snapshot. On launch, that snapshot is stale reference data and cannot supply rates or freshness. A live response starts a new five-minute observation period because elapsed time cannot be verified across app restarts. Cache files larger than 256 KiB are ignored. If the in-memory bound removes older evidence, forecasting uses the available recent observations and may need to warm up again. Credentials stay in Keychain and transient process memory. Headroom does not start Claude, alter credentials, or refresh tokens. There is no analytics service.
 
 The endpoint is internal. Response precision, quota behavior, and schema may change. Forecasts describe continued recent consumption, not future work schedules, exact token counts, or guaranteed access.

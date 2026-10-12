@@ -14,7 +14,7 @@ open build/Headroom.app
 
 `build.sh` creates a locally signed universal app for Apple Silicon and Intel. Set `ARCHS=arm64` or `ARCHS=x86_64` to build only one architecture. Use a single running copy of Headroom; quit an installed copy before opening a development build.
 
-`test.sh` checks forecast boundaries, burst detection, resets, counter corrections, missed observations, overlapping weekly outages, response decoding, clock formatting, VoiceOver wording, tabular digits, and stable widths across times and weekdays. Tests use synthetic quota data and do not access Keychain or the network. CI runs on Apple Silicon and Intel macOS 15 runners. Other supported macOS versions have not been exercised in CI.
+`test.sh` checks forecast boundaries, burst detection, resets, counter corrections, missed observations, overlapping weekly outages, response decoding, clock formatting, VoiceOver wording, tabular digits, and stable widths across times and weekdays. Clock-domain tests advance continuous instants independently of calendar dates to check clock jumps, sleep, cooldowns, freshness, HTTP retry dates, server jitter, and stale cache restoration. Tests use synthetic quota data and do not access Keychain or the network. CI runs on Apple Silicon and Intel macOS 15 runners. Other supported macOS versions have not been exercised in CI.
 
 ## Measure CPU work
 
@@ -34,7 +34,11 @@ The benchmark reports five batches of 1,000 operations for forecast calculation,
 | `Sources/StatusStyle.swift` | Native typography and fixed widths per state. |
 | `Sources/ClaudeMark.swift` | Cached template logo and outage warning icon. |
 | `Sources/RefreshGate.swift` | Shared request spacing, single-flight state, and retry deadlines. |
+| `Sources/RuntimeTimeline.swift` | Continuous observation timing, server calendar anchor, freshness, and stale restored snapshots. |
+| `Sources/HTTPDate.swift` | HTTP date parsing and conversion of Retry-After to elapsed duration. |
 | `Sources/HistoryStore.swift` | Bounded cache reads and private atomic checkpoints. |
+
+Keep elapsed deadlines typed as `ContinuousClock.Instant` and delays as `Duration`. Use `Date` for server quota timestamps, calendar anchoring, and display. `RuntimeTimeline` owns the bridge between these clocks. This separation follows [SwiftNIO's deadline design](https://github.com/apple/swift-nio/blob/main/Sources/NIOCore/EventLoop.swift); deterministic clock advances follow the testing approach in [Point-Free Clocks](https://github.com/pointfreeco/swift-clocks). Headroom depends on neither library.
 
 When changing quota rules, preserve immediate outage warnings and the 10% spare cutoff unless the intended behavior changes explicitly. Update the forecast reference and tests with the implementation. For UI changes, verify both appearance modes, narrow menu bars, and the existing four-point gap after the Claude logo. The states image in the README illustrates the native font and icons; it is not a screenshot of a live account.
 

@@ -2,24 +2,36 @@ import Foundation
 
 struct RefreshGate {
     private(set) var busy = false
-    private(set) var nextAttempt = Date.distantPast
-    private(set) var rateLimitUntil = Date.distantPast
-    private var earliestStart = Date.distantPast
+    private(set) var nextAttempt: ContinuousClock.Instant?
+    private(set) var rateLimitUntil: ContinuousClock.Instant?
+    private var earliestStart: ContinuousClock.Instant?
 
-    func allowsManual(at now: Date) -> Bool {
-        !busy && now >= earliestStart && now >= rateLimitUntil
+    func allowsManual(at now: ContinuousClock.Instant) -> Bool {
+        !busy && (earliestStart.map { now >= $0 } ?? true)
+            && (rateLimitUntil.map { now >= $0 } ?? true)
     }
 
-    mutating func begin(at now: Date, manual: Bool = false) -> Bool {
-        guard allowsManual(at: now), manual || now >= nextAttempt else { return false }
+    mutating func begin(at now: ContinuousClock.Instant, manual: Bool = false) -> Bool {
+        guard allowsManual(at: now), manual || nextAttempt.map({ now >= $0 }) ?? true else { return false }
         busy = true
-        earliestStart = now.addingTimeInterval(15)
+        earliestStart = now.advanced(by: .seconds(15))
         return true
     }
 
-    mutating func finish(nextAttempt: Date = .distantPast, rateLimitUntil: Date = .distantPast) {
+    mutating func finish(nextAttempt: ContinuousClock.Instant? = nil, rateLimitUntil: ContinuousClock.Instant? = nil) {
         busy = false
         self.nextAttempt = nextAttempt
         self.rateLimitUntil = rateLimitUntil
+    }
+
+    func nextAttemptDate(at now: ContinuousClock.Instant, wallNow: Date) -> Date? {
+        nextAttempt.map { wallNow.addingTimeInterval(max(0, now.duration(to: $0).timeInterval)) }
+    }
+}
+
+extension Duration {
+    var timeInterval: TimeInterval {
+        let parts = components
+        return Double(parts.seconds) + Double(parts.attoseconds) / 1e18
     }
 }

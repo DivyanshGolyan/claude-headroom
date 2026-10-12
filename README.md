@@ -27,7 +27,7 @@ Headroom reads your existing Claude Code login from Keychain. If it says **Signe
 | `Measuring` | Gathering the first five minutes of observations for this window. |
 | `Ready` | The server reports no active five-hour window. |
 
-Updates arrive approximately every minute. Forecasts assume your recent usage pace continues; they aren't guarantees. Weekly warnings identify the relevant limit and reset day.
+Updates arrive approximately every minute. After each app launch, Headroom collects five minutes of fresh observations before estimating your pace. Forecasts assume that pace continues; they aren't guarantees. Weekly warnings identify the relevant limit and reset day.
 
 Click or right-click for **Refresh now**, **Launch at login**, and **Quit**. Launch at login starts off. Hover for the last successful update and any error. During fetch failures, the last forecast dims after three minutes and becomes **No data** after ten. If a menu-bar manager hides the app, reveal it and Command-drag Headroom into the visible section.
 

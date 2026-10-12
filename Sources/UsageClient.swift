@@ -10,29 +10,26 @@ actor UsageClient {
         return URLSession(configuration: config)
     }()
 
-    func fetch() async throws -> UsageSample {
+    func fetch() async throws -> FetchedUsage {
         let token = try accessToken()
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         let (data, response) = try await session.data(for: request)
+        let receivedAt = ContinuousClock.now
+        let localDate = Date()
         guard let http = response as? HTTPURLResponse else {
             throw UsageError.message("Claude returned an invalid response.")
         }
+        let serverDate = HTTPDate.parse(http.value(forHTTPHeaderField: "Date"))
         switch http.statusCode {
         case 200:
-            return try JSONDecoder().decode(UsageResponse.self, from: data).sample(at: Date())
+            return FetchedUsage(sample: try JSONDecoder().decode(UsageResponse.self, from: data).sample(at: localDate),
+                receivedAt: receivedAt, serverDate: serverDate)
         case 401, 403: throw UsageError.signedOut
         case 429:
-            let header = http.value(forHTTPHeaderField: "Retry-After") ?? ""
-            let dateFormatter = DateFormatter()
-            dateFormatter.locale = Locale(identifier: "en_US_POSIX")
-            dateFormatter.timeZone = TimeZone(secondsFromGMT: 0)
-            dateFormatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
-            let seconds = Double(header)
-            let until = seconds.map { Date().addingTimeInterval(max(60, $0)) }
-                ?? dateFormatter.date(from: header) ?? Date().addingTimeInterval(5 * 60)
-            throw UsageError.rateLimited(max(Date().addingTimeInterval(60), until))
+            throw UsageError.rateLimited(HTTPDate.retryDelay(http.value(forHTTPHeaderField: "Retry-After"),
+                serverDate: serverDate, localDate: localDate), receivedAt: receivedAt)
         default: throw UsageError.message("Claude usage request failed (HTTP \(http.statusCode)).")
         }
     }
