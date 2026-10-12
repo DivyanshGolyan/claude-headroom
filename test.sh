@@ -20,6 +20,8 @@ swiftc -swift-version 5 Sources/Forecast.swift Sources/RefreshGate.swift Sources
 build/response-timing-tests
 swiftc -swift-version 5 Sources/Forecast.swift Sources/RefreshGate.swift Sources/RuntimeTimeline.swift Sources/StatusPresentation.swift Tests/DisplayScheduleTests.swift -o build/display-schedule-tests
 build/display-schedule-tests
+swiftc -swift-version 5 Sources/Forecast.swift Sources/StatusPresentation.swift Sources/RefreshGate.swift Sources/RuntimeTimeline.swift Sources/HistoryStore.swift Sources/HTTPDate.swift Sources/ResponseTiming.swift Sources/UsageClient.swift Sources/HeadroomProtocol.swift Sources/HeadroomEngine.swift Sources/LocalSocket.swift Sources/HeadroomServer.swift CLI/Command.swift Tests/HeadroomTests.swift -o build/headroom-tests
+build/headroom-tests
 mkdir -p build/StyleTests.app/Contents/MacOS build/StyleTests.app/Contents/Resources
 cp Resources/Claude.svg build/StyleTests.app/Contents/Resources/
 swiftc -swift-version 5 Sources/Forecast.swift Sources/StatusStyle.swift Sources/ClaudeMark.swift Tests/StyleTests.swift -o build/StyleTests.app/Contents/MacOS/style-tests

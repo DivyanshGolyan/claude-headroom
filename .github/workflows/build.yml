@@ -18,6 +18,9 @@ jobs:
       - run: bash test.sh
       - run: bash build.sh
       - run: test "$(lipo -archs build/Headroom.app/Contents/MacOS/Headroom)" = arm64
+      - run: test "$(lipo -archs build/Headroom.app/Contents/Helpers/headroom)" = arm64
+      - run: build/headroom --help
+      - run: codesign --verify --deep --strict build/Headroom.app
 
   release:
     name: Publish Apple Silicon app

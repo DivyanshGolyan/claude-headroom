@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import re
+import zipfile
 from pathlib import Path
 
 
@@ -50,6 +51,12 @@ def update(version, checksums, archive, output, metadata):
             raise ValueError("Published release checksum changed for the same version")
         if numbers == previous:
             return
+    try:
+        with zipfile.ZipFile(archive) as bundle:
+            has_cli = "Headroom.app/Contents/Helpers/headroom" in bundle.namelist()
+    except zipfile.BadZipFile as error:
+        raise ValueError("Headroom.zip is not a valid ZIP archive") from error
+    binary = '\n  binary "#{appdir}/Headroom.app/Contents/Helpers/headroom"' if has_cli else ""
     content = '''cask "headroom" do
   version "%s"
   sha256 "%s"
@@ -62,11 +69,11 @@ def update(version, checksums, archive, output, metadata):
   depends_on arch: :arm64
   depends_on macos: :ventura
 
-  app "Headroom.app"
+  app "Headroom.app"%s
 
   uninstall quit: "com.divyanshgolyan.headroom"
 end
-''' % (version, checksum)
+''' % (version, checksum, binary)
     if not output.exists() or output.read_text() != content:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(content)

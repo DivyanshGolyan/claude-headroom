@@ -7,20 +7,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let menu = NSMenu()
     private var menuIsOpen = false
     private var displayTimer: Timer?
-    private let client = UsageClient()
-    private var timeline = RuntimeTimeline()
-    private var refreshGate = RefreshGate()
-    private var failures = 0
-    private var problem: FetchProblem?
-    private var problemDetail: String?
+    private let engine = HeadroomEngine()
+    private var server: HeadroomServer?
     private var signInAttempts = SignInAttempts()
-    private var loginRefreshPending = false
-    private var fetchTimer: Timer?
-    private let historyStore = HistoryStore(url: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Headroom/history.json"))
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if let saved = historyStore.load() { timeline = RuntimeTimeline(restored: saved) }
+        engine.onChange = { [weak self] in self?.render() }
+        let server = HeadroomServer(engine: engine)
+        do {
+            try server.start()
+            self.server = server
+        } catch {
+            NSLog("Headroom CLI unavailable: %@", (error as? HeadroomFailure)?.message ?? "Could not start local IPC.")
+            if (error as? HeadroomFailure)?.code == "app_already_running" {
+                NSApp.terminate(nil)
+                return
+            }
+        }
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.autosaveName = "Headroom"
         item.button?.alignment = .left
@@ -55,73 +58,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func woke() { refresh() }
 
-    @objc private func refresh() { fetch(manual: false) }
-
-    private func fetch(manual: Bool) {
-        render()
-        guard refreshGate.begin(at: ContinuousClock.now, manual: manual || loginRefreshPending) else {
-            scheduleRefresh()
-            return
-        }
-        loginRefreshPending = false
-        fetchTimer?.invalidate()
-        fetchTimer = nil
-        Task {
-            var nextAttempt: ContinuousClock.Instant?
-            var rateLimitUntil: ContinuousClock.Instant?
-            do {
-                let fetched = try await client.fetch()
-                timeline.record(fetched)
-                failures = 0
-                nextAttempt = fetched.receivedAt.advanced(by: RefreshGate.automaticInterval)
-                problem = nil
-                problemDetail = nil
-                saveHistory()
-            } catch {
-                failures += 1
-                let backoff = Duration.seconds(min(900, 60 * pow(2, Double(min(failures - 1, 4)))))
-                nextAttempt = ContinuousClock.now.advanced(by: backoff)
-                switch error {
-                case UsageError.signedOut:
-                    problem = .signedOut
-                    problemDetail = "The Claude credential is missing or was rejected. Choose Sign in to Claude, complete sign-in, then refresh."
-                    nextAttempt = ContinuousClock.now.advanced(by: .seconds(300))
-                case let UsageError.rateLimited(delay, receivedAt):
-                    problem = .rateLimited
-                    problemDetail = "Claude asked Headroom to wait. Refresh now also respects this cooldown."
-                    nextAttempt = receivedAt.advanced(by: delay ?? backoff)
-                    rateLimitUntil = nextAttempt
-                default:
-                    problem = .unavailable
-                    problemDetail = (error as? UsageError).flatMap {
-                        if case let .message(message) = $0 { return message }
-                        return nil
-                    } ?? "Could not fetch Claude usage. Headroom will retry automatically."
-                }
-            }
-            refreshGate.finish(nextAttempt: nextAttempt, rateLimitUntil: rateLimitUntil)
-            render()
-            scheduleRefresh()
-        }
-    }
+    @objc private func refresh() { engine.refreshIfDue() }
 
     private func render() {
         guard !menuIsOpen else { return }
         let instant = ContinuousClock.now
         let now = Date()
-        let display = timeline.display(at: instant, wallNow: now)
+        let snapshot = engine.status(at: instant, wallNow: now)
         displayTimer?.invalidate()
         displayTimer = nil
-        if let deadline = display.nextUpdate {
+        if let deadline = snapshot.nextDisplayUpdate {
             displayTimer = Timer.scheduledTimer(withTimeInterval: max(0.001, instant.duration(to: deadline).timeInterval), repeats: false) { [weak self] _ in
                 Task { @MainActor in self?.render() }
             }
             displayTimer?.tolerance = 2
         }
-        let forecast = display.forecast
-        let age = timeline.age(at: instant)
-        let retryAt = refreshGate.nextAttemptDate(at: instant, wallNow: now)
-        let presentation = StatusPresentation(forecast: forecast, now: now, age: age, problem: problem, retryAt: retryAt)
+        let forecast = snapshot.forecast
+        let age = snapshot.age
+        let retryAt = snapshot.retryAt
+        let presentation = snapshot.presentation
         let title = presentation.title
         guard let button = item.button else { return }
         if button.title != title { button.title = title }
@@ -132,13 +87,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let width = StatusStyle.width(forecast: presentation.showsForecast ? forecast : .stale, title: title)
         if item.length != width { item.length = width }
         var detail = "Headroom · Claude quota\nUses the faster of the last 10 and 60 minutes of observed usage, including idle time and previous quota windows. Without a minute of observations, estimates pace from current-window consumption. Assumes this pace continues.\n"
-        if let last = timeline.history.samples.last {
+        if let last = snapshot.sample {
             detail += "Last updated: \(last.date.formatted(date: .omitted, time: .standard))\n"
-            detail += StatusPresentation.usageDetail(sample: last, now: timeline.calendarNow(at: instant)) + "\n"
+            detail += StatusPresentation.usageDetail(sample: last, now: snapshot.calendarNow) + "\n"
         }
         if forecast == .estimating { detail += "Needs a usable window start or live observations at least one minute apart.\n" }
-        if let problemDetail {
-            detail += problemDetail + "\n"
+        if let failure = snapshot.failure {
+            detail += failure.message + "\n"
             if let retryAt {
                 detail += "Next attempt: \(Clock.deadline(retryAt, relativeTo: now, seconds: true))\n"
             }
@@ -149,10 +104,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if button.accessibilityLabel() != label { button.setAccessibilityLabel(label) }
         let value = age > StatusPresentation.dimAfter ? "Last successful update was more than six minutes ago." : ""
         if button.accessibilityValue() as? String != value { button.setAccessibilityValue(value) }
-    }
-
-    private func saveHistory() {
-        try? historyStore.save(timeline.snapshot)
     }
 
     @objc private func showMenu() {
@@ -169,18 +120,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         menu.removeAllItems()
-        var detail = StatusPresentation.usageDetail(sample: timeline.history.samples.last,
-            now: timeline.calendarNow(at: ContinuousClock.now))
-        if problem == .signedOut { detail = "Last update · " + detail }
+        let snapshot = engine.status()
+        var detail = StatusPresentation.usageDetail(sample: snapshot.sample, now: snapshot.calendarNow)
+        if snapshot.problem == .signedOut { detail = "Last update · " + detail }
         menu.addItem(withTitle: detail, action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(.separator())
-        if problem == .signedOut {
+        if snapshot.problem == .signedOut {
             let signIn = menu.addItem(withTitle: "Sign in to Claude…", action: #selector(signIn), keyEquivalent: "")
             signIn.target = self
         }
         let refreshItem = menu.addItem(withTitle: "Refresh now", action: #selector(manualRefresh), keyEquivalent: "")
         refreshItem.target = self
-        refreshItem.isEnabled = refreshGate.allowsManual(at: ContinuousClock.now)
+        refreshItem.isEnabled = snapshot.canRefresh
         let login = menu.addItem(withTitle: "Launch at login", action: #selector(toggleLogin), keyEquivalent: "")
         login.target = self
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -190,7 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func manualRefresh() {
-        fetch(manual: true)
+        Task { await engine.refresh() }
     }
 
     @objc private func signIn() {
@@ -217,22 +168,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let attemptID = notification.object as? String,
               let succeeded = notification.userInfo?["succeeded"] as? Bool,
               signInAttempts.finish(.init(attemptID: attemptID, succeeded: succeeded)) else { return }
-        failures = 0
-        loginRefreshPending = true
-        scheduleRefresh()
+        engine.loginCompleted()
     }
 
-    private func scheduleRefresh() {
-        guard !refreshGate.busy else { return }
-        let now = ContinuousClock.now
-        let deadline = loginRefreshPending ? refreshGate.earliestManualAttempt(at: now)
-            : refreshGate.earliestAutomaticAttempt(at: now)
-        let delay = now.duration(to: deadline).timeInterval
-        fetchTimer?.invalidate()
-        fetchTimer = Timer.scheduledTimer(withTimeInterval: max(0.001, delay), repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
-        }
-    }
+    func applicationWillTerminate(_ notification: Notification) { server?.stop() }
+
     @objc private func quit() { NSApp.terminate(nil) }
 
     @objc private func toggleLogin() {

@@ -2,8 +2,12 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p build/Headroom.app/Contents/MacOS
+mkdir -p build/Headroom.app/Contents/Helpers
 mkdir -p build/Headroom.app/Contents/Resources
 swiftc -O -swift-version 5 -target arm64-apple-macosx13.0 Sources/*.swift -o build/Headroom.app/Contents/MacOS/Headroom
+swiftc -O -swift-version 5 -target arm64-apple-macosx13.0 Sources/HeadroomProtocol.swift Sources/LocalSocket.swift CLI/*.swift -o build/Headroom.app/Contents/Helpers/headroom
+codesign --force --sign - --identifier com.divyanshgolyan.headroom.cli build/Headroom.app/Contents/Helpers/headroom
+ln -sf Headroom.app/Contents/Helpers/headroom build/headroom
 cp Info.plist build/Headroom.app/Contents/Info.plist
 cp Resources/Claude.svg build/Headroom.app/Contents/Resources/Claude.svg
 cp LICENSE build/Headroom.app/Contents/Resources/LICENSE.txt

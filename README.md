@@ -41,6 +41,30 @@ Headroom checks usage every five minutes. Recent consumption rates continue acro
 
 Click or right-click for **Refresh now**, **Launch at login**, and **Quit**. Launch at login starts off. Hover for the last successful update, any error, and the scheduled retry time. During rate limits and other temporary fetch failures, usable forecasts stay visible for up to 15 minutes and dim after six. A valid `Retry-After` sets the retry deadline directly; otherwise failures back off from one to 15 minutes. Manual refresh respects server cooldowns and never overlaps another request. With no usable forecast, the bar shows **Rate limited · retry 6:55** or **Usage unavailable**. If a menu-bar manager hides the app, reveal it and Command-drag Headroom into the visible section.
 
+## CLI
+
+With a build that includes the CLI, Homebrew also installs the `headroom` command. Keep the menu-bar app running, then use:
+
+```sh
+headroom status
+headroom refresh --timeout 30s
+headroom status --format text
+headroom status | jq '.data.forecast'
+```
+
+JSON is the default. `status` reads the app's current observation and forecast without fetching usage. `refresh` waits for a successful update, joins an existing request when possible, and respects Claude's cooldown. If the app is closed, the command returns `app_not_running`. It never starts the app or reads credentials itself.
+
+For a downloaded app in `/Applications`, install a command link without administrator access:
+
+```sh
+mkdir -p "$HOME/.local/bin"
+ln -s /Applications/Headroom.app/Contents/Helpers/headroom "$HOME/.local/bin/headroom"
+export PATH="$HOME/.local/bin:$PATH"
+headroom status --format text
+```
+
+Add the `export PATH` line to your shell configuration, such as `~/.zshrc`, if that directory is not already on your `PATH`. Adjust the app path if you installed it elsewhere. The link continues to work when the app is replaced during an update. You can also run the bundled executable directly. Source builds provide `build/headroom`. See the [CLI contract](docs/cli.md) for fields, errors, freshness, and exit codes.
+
 ## Privacy and limitations
 
 Headroom sends your existing Claude OAuth token only to Anthropic's usage endpoint. It stores quota observations locally; it saves no credentials and sends no analytics. The endpoint is internal and may change. Headroom reads credentials but does not refresh them. It tracks general and Opus weekly limits; other model-specific limits are excluded.

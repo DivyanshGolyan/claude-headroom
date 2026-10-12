@@ -12,9 +12,13 @@ bash build.sh
 open build/Headroom.app
 ```
 
-`build.sh` creates a locally signed Apple Silicon app. Use a single running copy of Headroom; quit an installed copy before opening a development build.
+`build.sh` creates a locally signed Apple Silicon app and `build/headroom`, a link to its bundled CLI. Use a single running copy of Headroom; quit an installed copy before opening a development build. A second CLI-capable app exits when another instance owns the endpoint.
+
+Run `build/headroom status` or `build/headroom refresh --timeout 30s` with the built app running. The [CLI contract](cli.md) documents the versioned JSON and command behavior. The CLI lives in `Contents/Helpers` so its lowercase name does not collide with the `Headroom` main executable on case-insensitive filesystems. The build signs the helper before signing the containing app.
 
 `test.sh` checks forecast boundaries, burst detection, resets, counter corrections, missed observations, overlapping weekly outages, response decoding, clock formatting, VoiceOver wording, tabular digits, and stable widths across times and weekdays. Clock-domain tests advance continuous instants independently of calendar dates to check clock jumps, sleep, cooldowns, freshness, HTTP retry dates, server jitter, and stale cache restoration. Tests use synthetic quota data and do not access Keychain or the network. CI runs on an Apple Silicon macOS 15 runner. Other supported macOS versions have not been exercised in CI.
+
+CLI checks use synthetic fetches and real local Unix sockets to verify shared refreshes, read-only status, retained forecasts after failures, authentication, cooldowns, timeouts, endpoint ownership, argument errors, and JSON/text output. They use isolated temporary endpoints and do not connect to an installed app.
 
 ## Check dropdown alignment
 
@@ -43,7 +47,12 @@ To measure CPU, physical memory, and kernel wakeup counters for an already runni
 |---|---|
 | `Sources/Forecast.swift` | Response decoding, quota history, rate calculation, labels, and accessible descriptions. |
 | `Sources/UsageClient.swift` | Keychain credential reads and usage requests. |
-| `Sources/App.swift` | App lifecycle, polling, freshness, menu, login item, and persistence. |
+| `Sources/App.swift` | App lifecycle, display scheduling, menu, sign-in flow, and login item. |
+| `Sources/HeadroomEngine.swift` | Sole owner of monitoring state, polling, coalesced refreshes, retry policy, persistence, and snapshots. |
+| `Sources/HeadroomProtocol.swift` | Versioned command and status JSON, independent of storage and provider formats. |
+| `Sources/HeadroomServer.swift` | App-owned local command server and endpoint ownership. |
+| `Sources/LocalSocket.swift` | Bounded socket frames, continuous deadlines, and peer-user validation. |
+| `CLI/Command.swift` | Argument parsing, JSON/text output, and exit codes. |
 | `Sources/StatusStyle.swift` | Native typography and fixed widths per state. |
 | `Sources/ClaudeMark.swift` | Cached template logo and outage warning icon. |
 | `Sources/RefreshGate.swift` | Shared request spacing, single-flight state, and retry deadlines. |

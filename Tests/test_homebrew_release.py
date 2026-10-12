@@ -3,6 +3,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 
@@ -18,7 +19,8 @@ class HomebrewReleaseTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
         self.archive = self.directory / "Headroom.zip"
-        self.archive.write_bytes(b"published release archive")
+        with zipfile.ZipFile(self.archive, "w") as bundle:
+            bundle.writestr("Headroom.app/Contents/MacOS/Headroom", b"app executable")
         self.checksum = hashlib.sha256(self.archive.read_bytes()).hexdigest()
         self.checksums = self.directory / "SHA256SUMS"
         self.checksums.write_text("%s  Headroom.zip\n%s  Headroom.dmg\n" % (self.checksum, "a" * 64))
@@ -55,6 +57,16 @@ class HomebrewReleaseTests(unittest.TestCase):
         timestamp = self.output.stat().st_mtime_ns
         self.update()
         self.assertEqual(timestamp, self.output.stat().st_mtime_ns)
+
+    def test_cli_link_only_for_archives_that_include_the_cli(self):
+        self.update()
+        self.assertNotIn('  binary ', self.output.read_text())
+        with zipfile.ZipFile(self.archive, "a") as bundle:
+            bundle.writestr("Headroom.app/Contents/Helpers/headroom", b"cli executable")
+        self.checksums.write_text(hashlib.sha256(self.archive.read_bytes()).hexdigest() + "  Headroom.zip\n")
+        self.set_release("v1.3.0")
+        self.update("v1.3.0")
+        self.assertIn('  binary "#{appdir}/Headroom.app/Contents/Helpers/headroom"', self.output.read_text())
 
     def test_upgrade_compares_versions_numerically(self):
         self.set_release("v1.9.0")
