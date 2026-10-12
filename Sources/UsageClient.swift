@@ -1,0 +1,63 @@
+import Foundation
+
+actor UsageClient {
+    private let session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 20
+        config.timeoutIntervalForResource = 25
+        config.httpCookieStorage = nil
+        config.urlCache = nil
+        return URLSession(configuration: config)
+    }()
+
+    func fetch() async throws -> UsageSample {
+        let token = try accessToken()
+        var request = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw UsageError.message("Claude returned an invalid response.")
+        }
+        switch http.statusCode {
+        case 200:
+            return try JSONDecoder().decode(UsageResponse.self, from: data).sample(at: Date())
+        case 401, 403: throw UsageError.signedOut
+        case 429:
+            let header = http.value(forHTTPHeaderField: "Retry-After") ?? ""
+            let dateFormatter = DateFormatter()
+            dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+            dateFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+            dateFormatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+            let seconds = Double(header)
+            let until = seconds.map { Date().addingTimeInterval(max(60, $0)) }
+                ?? dateFormatter.date(from: header) ?? Date().addingTimeInterval(5 * 60)
+            throw UsageError.rateLimited(max(Date().addingTimeInterval(60), until))
+        default: throw UsageError.message("Claude usage request failed (HTTP \(http.statusCode)).")
+        }
+    }
+
+    private func accessToken() throws -> String {
+        // Reuse the same Keychain reader as the existing headroom CLI.
+        // The token stays in memory and is never written to the history or logs.
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let deadline = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: deadline)
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        deadline.cancel()
+        guard process.terminationStatus == 0,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let oauth = json["claudeAiOauth"] as? [String: Any],
+              let token = oauth["accessToken"] as? String, !token.isEmpty else {
+            throw UsageError.signedOut
+        }
+        return token
+    }
+}
