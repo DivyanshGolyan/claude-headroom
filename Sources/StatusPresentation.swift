@@ -15,7 +15,7 @@ struct StatusPresentation {
         switch forecast {
         case .ready, .onTrack, .gap, .out, .spare:
             hasCurrentWindow = true
-        case .estimating, .awaitingReset, .stale:
+        case .estimating, .awaitingUpdate, .stale:
             hasCurrentWindow = false
         }
         let canForecast = hasCurrentWindow && (0...Forecast.maximumSampleAge).contains(age)
@@ -41,5 +41,14 @@ struct StatusPresentation {
             showsForecast = true
         }
         appearsDisabled = showsForecast && age > 180 && age <= Forecast.maximumSampleAge
+    }
+
+    static func usageDetail(sample: UsageSample?, now: Date) -> String {
+        guard let sample else { return "Waiting for usage data" }
+        guard let reset = sample.reset else { return "No active five-hour window" }
+        if reset <= now {
+            return "Previous window · \(Int(sample.used))% used · reset \(Clock.deadline(Clock.displayReset(reset), relativeTo: now))"
+        }
+        return "\(Int(sample.used))% used · resets \(Clock.time(Clock.displayReset(reset)))"
     }
 }

@@ -7,7 +7,7 @@ Headroom samples account quota approximately once a minute from `https://api.ant
 For each tracked quota window, calculate two rates from changes in its cumulative usage percentage:
 
 - Short rate: the last 10 minutes.
-- Long rate: the remaining time until reset, clamped to a lookback of 15–60 minutes.
+- Long rate: the last 60 minutes.
 
 Use the faster rate for both exhaustion and spare forecasts. This conservatively catches bursts, even when earlier observations include idle time. All observed time counts, including idle time. Once live observations span at least one minute, use their measured rate and refine it as history grows. When there is less history than the lookback, use the available observations. Early estimates are noisier, especially when counters change in whole percentage points. A minute with no reported increase counts as zero observed consumption, even though rounding or delayed reporting may hide some usage.
 
@@ -25,7 +25,9 @@ Estimated exhaustion times round down to five minutes. Spare rounds down to five
 
 ## Continuity and coverage
 
-Keep observations through sleep and failed requests while the app remains running. Cumulative usage captures consumption between observations; interpolate an anchor at the lookback boundary. Across a long interruption this assumes uniform consumption over the missing interval, so the actual timing of a burst is unknown. A reset or a decreasing counter starts a fresh rate history for that quota window. Rates from an earlier window are not used as priors.
+Keep observations through sleep, failed requests, and quota resets while the app remains running. Measure consumption independently of the current allowance: within a window, add counter increases; at a reset, add the new window's usage to the observed total. The rolling rate therefore spans windows without subtracting the old balance from the new one. An unexplained counter decrease or reset timestamp moving backward starts fresh observations. Missing weekly limits also break that limit's history.
+
+Interpolate an anchor at the lookback boundary. Across an interruption this assumes uniform consumption over the missing interval. At a reset, consumption between the final old-window observation and the actual reset is unknown and cannot be recovered from the new counter; the observed rate can therefore underestimate it. A zero new counter with no measured consumption shows Ready, rather than claiming 100% spare. An elapsed window with no replacement data shows Waiting for usage, and saved details identify it as the previous window.
 
 Five-hour quota drives spare estimates. Active, unscoped weekly limits and active Opus weekly limits also participate in outage detection. Other model-specific limits, such as Sonnet or Fable, are excluded. This policy suits Opus-heavy work; it is not a complete forecast for every model. Weekly rates use their own observations and the same initial-average fallback. A counter already at 100% warns immediately. Overlapping outages merge into the earliest continuous outage; the displayed end is when all overlapping limits have reset.
 

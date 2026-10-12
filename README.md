@@ -25,9 +25,10 @@ Headroom reads your existing Claude Code login from Keychain. If it says **Signe
 | `20% spare till 7:20` | At least 10% is predicted to remain unused at reset. |
 | `On track` | Predicted unused quota is below 10%, with no predicted outage. |
 | `Measuring` | Waiting for live data or a usable observation interval. |
-| `Ready` | The server reports no active five-hour window. |
+| `Ready` | No active five-hour window, or no usage and no measured consumption rate. |
+| `Waiting for usage` | The previous window ended; updated usage has not arrived yet. |
 
-Updates arrive approximately every minute. The first live response estimates pace from usage since the quota window began. Once live observations span a minute, Headroom uses measured recent consumption and refines it as history grows. Early estimates can change substantially, especially when usage is reported in whole percentage points. Forecasts assume that pace continues; they aren't guarantees. Weekly warnings identify the relevant limit and reset day.
+Updates arrive approximately every minute. Recent consumption rates continue across quota resets; the new window supplies its own remaining allowance and reset time. Headroom uses the faster of its 10- and 60-minute rates. Without a minute of observations, it estimates pace from current-window usage. Early estimates can change substantially, especially when usage is reported in whole percentage points. Forecasts assume that pace continues; they aren't guarantees. Weekly warnings identify the relevant limit and reset day.
 
 Click or right-click for **Refresh now**, **Launch at login**, and **Quit**. Launch at login starts off. Hover for the last successful update, any error, and the scheduled retry time. During rate limits and other temporary fetch failures, usable forecasts stay visible for up to 15 minutes and dim after three. With no usable forecast, the bar shows **Rate limited · retry 6:55** or **Usage unavailable**. If a menu-bar manager hides the app, reveal it and Command-drag Headroom into the visible section.
 

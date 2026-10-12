@@ -28,7 +28,7 @@ enum StatusPresentationTests {
                 }
             }
         }
-        for forecast in [Forecast.stale, .estimating, .awaitingReset] {
+        for forecast in [Forecast.stale, .estimating, .awaitingUpdate] {
             for age in [0.0, 180, 900] {
                 for problem in [FetchProblem.rateLimited, .unavailable] {
                     let status = StatusPresentation(forecast: forecast, now: now, age: age,
@@ -38,6 +38,23 @@ enum StatusPresentationTests {
                 }
             }
         }
+        let reset = now.addingTimeInterval(60)
+        let sample = UsageSample(date: now, used: 89, reset: reset)
+        precondition(StatusPresentation.usageDetail(sample: sample, now: now).hasPrefix("89% used · resets"))
+        for time in [reset, reset.addingTimeInterval(60), reset.addingTimeInterval(86400)] {
+            let forecast = Forecast.calculate(samples: [sample], now: time)
+            let detail = StatusPresentation.usageDetail(sample: sample, now: time)
+            precondition(detail.hasPrefix("Previous window · 89% used · reset "))
+            precondition(!detail.contains("resets"))
+            if time.timeIntervalSince(sample.date) <= Forecast.maximumSampleAge {
+                let status = StatusPresentation(forecast: forecast, now: time, age: time.timeIntervalSince(sample.date), problem: nil, retryAt: nil)
+                precondition(status.title == "Waiting for usage")
+                precondition(status.accessibilityText.contains("previous quota window has ended"))
+            }
+        }
+        precondition(StatusPresentation.usageDetail(sample: nil, now: now) == "Waiting for usage data")
+        precondition(StatusPresentation.usageDetail(sample: UsageSample(date: now, used: 0, reset: nil), now: now) == "No active five-hour window")
+        print("PASS reset boundary retires old window labels while waiting for updated usage")
         let missingDeadline = StatusPresentation(forecast: .stale, now: now, age: .infinity,
             problem: .rateLimited, retryAt: nil)
         precondition(missingDeadline.title == "Rate limited")

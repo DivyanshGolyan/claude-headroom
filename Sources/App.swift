@@ -114,10 +114,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if button.image !== image { button.image = image }
         let width = StatusStyle.width(forecast: presentation.showsForecast ? forecast : .stale, title: title)
         if item.length != width { item.length = width }
-        var detail = "Headroom · Claude quota\nInitial estimate uses average consumption since the quota window began. After a minute of live observations, uses the faster of the last 10 minutes and a 15–60 minute baseline, including idle time. Assumes this pace continues.\n"
+        var detail = "Headroom · Claude quota\nUses the faster of the last 10 and 60 minutes of observed usage, including idle time and previous quota windows. Without a minute of observations, estimates pace from current-window consumption. Assumes this pace continues.\n"
         if let last = timeline.history.samples.last {
             detail += "Last updated: \(last.date.formatted(date: .omitted, time: .standard))\n"
-            if let reset = last.reset { detail += "Reset: \(Clock.displayReset(reset).formatted(date: .abbreviated, time: .shortened))\n" }
+            detail += StatusPresentation.usageDetail(sample: last, now: timeline.calendarNow(at: instant)) + "\n"
         }
         if forecast == .estimating { detail += "Needs a usable window start or live observations at least one minute apart.\n" }
         if let problemDetail {
@@ -150,10 +150,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         menu.removeAllItems()
-        let detail: String
-        if let last = timeline.history.samples.last, let reset = last.reset {
-            detail = "\(Int(last.used))% used · resets \(Clock.time(Clock.displayReset(reset)))"
-        } else { detail = timeline.history.samples.isEmpty ? "Waiting for usage data" : "No active five-hour window" }
+        let detail = StatusPresentation.usageDetail(sample: timeline.history.samples.last,
+            now: timeline.calendarNow(at: ContinuousClock.now))
         menu.addItem(withTitle: detail, action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(.separator())
         let refreshItem = menu.addItem(withTitle: "Refresh now", action: #selector(manualRefresh), keyEquivalent: "")
