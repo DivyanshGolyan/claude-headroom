@@ -13,6 +13,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var failures = 0
     private var problem: FetchProblem?
     private var problemDetail: String?
+    private var signInAttempt: String?
+    private var loginRefreshPending = false
+    private var loginRefreshTimer: Timer?
     private let historyStore = HistoryStore(url: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Headroom/history.json"))
 
@@ -27,6 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.button?.imageHugsTitle = true
         menu.delegate = self
         menu.autoenablesItems = false
+        DistributedNotificationCenter.default().addObserver(self, selector: #selector(loginCompleted(_:)),
+            name: SignInFlow.notification, object: nil)
         item.button?.target = self
         item.button?.action = #selector(showMenu)
         if let button = item.button {
@@ -58,7 +63,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func fetch(manual: Bool) {
         render()
-        guard refreshGate.begin(at: ContinuousClock.now, manual: manual) else { return }
+        guard refreshGate.begin(at: ContinuousClock.now, manual: manual || loginRefreshPending) else { return }
+        loginRefreshPending = false
+        loginRefreshTimer?.invalidate()
+        loginRefreshTimer = nil
         Task {
             var nextAttempt: ContinuousClock.Instant?
             var rateLimitUntil: ContinuousClock.Instant?
@@ -94,6 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             refreshGate.finish(nextAttempt: nextAttempt, rateLimitUntil: rateLimitUntil)
             render()
+            if loginRefreshPending { scheduleLoginRefresh() }
         }
     }
 
@@ -180,22 +189,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
                 attributes: [.posixPermissions: 0o700])
             let script = directory.appendingPathComponent("Sign in to Claude.command")
-            let command = """
-            #!/bin/zsh -l
-            export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
-            claude auth login
-            printf '\\nReturn to Headroom and choose Refresh now.\\n'
-            rm -- "$0"
-            rmdir -- "${0:h}"
-            """
+            let attemptID = UUID().uuidString
+            let command = SignInFlow.command(executable: Bundle.main.executableURL!.path, attemptID: attemptID)
             try command.write(to: script, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+            signInAttempt = attemptID
             guard NSWorkspace.shared.open(script) else { throw UsageError.message("Could not open Terminal.") }
         } catch {
+            signInAttempt = nil
             let alert = NSAlert()
             alert.messageText = "Open Terminal and run: claude auth login"
             alert.informativeText = "After signing in, choose Refresh now in Headroom."
             alert.runModal()
+        }
+    }
+
+    @objc private func loginCompleted(_ notification: Notification) {
+        guard let attemptID = notification.object as? String, attemptID == signInAttempt else { return }
+        signInAttempt = nil
+        failures = 0
+        loginRefreshPending = true
+        scheduleLoginRefresh()
+    }
+
+    private func scheduleLoginRefresh() {
+        guard loginRefreshPending, !refreshGate.busy else { return }
+        let now = ContinuousClock.now
+        let delay = now.duration(to: refreshGate.earliestManualAttempt(at: now)).timeInterval
+        if delay <= 0 { fetch(manual: true); return }
+        loginRefreshTimer?.invalidate()
+        loginRefreshTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.scheduleLoginRefresh() }
         }
     }
     @objc private func quit() { NSApp.terminate(nil) }
@@ -222,6 +246,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 @main
 enum HeadroomApp {
     static func main() {
+        if CommandLine.arguments.dropFirst().first == "--login-completed" {
+            guard let attemptID = SignInFlow.completionID(arguments: CommandLine.arguments) else { exit(64) }
+            SignInFlow.postCompletion(attemptID)
+            return
+        }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate

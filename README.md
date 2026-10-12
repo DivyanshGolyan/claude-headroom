@@ -14,7 +14,7 @@ Requires macOS 13 or later, on Apple Silicon or Intel, and [Claude Code](https:/
 2. Open Headroom. It appears in the menu bar, with no Dock icon or app window.
 3. If macOS blocks the first launch, go to **System Settings → Privacy & Security → Open Anyway**, then open it again. Releases are locally signed, not Apple-notarized. [Apple explains this approval](https://support.apple.com/en-us/102445).
 
-Headroom reads your existing Claude Code login from Keychain. If it says **Sign-in needed**, choose **Sign in to Claude…** from its menu. This opens Terminal to run `claude auth login`. Complete sign-in, then choose **Refresh now**. Headroom does not refresh tokens itself.
+Headroom reads your existing Claude Code login from Keychain. If it says **Sign-in needed**, choose **Sign in to Claude…** from its menu. This opens Terminal to run `claude auth login`. Successful sign-in automatically refreshes Headroom, respecting any server cooldown. Headroom does not refresh tokens itself.
 
 ## Use
 
