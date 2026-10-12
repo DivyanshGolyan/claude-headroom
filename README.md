@@ -8,7 +8,7 @@ See when your Claude quota will run out, or how much will go unused before reset
 
 ## Install
 
-Requires macOS 13 or later, on Apple Silicon or Intel, and [Claude Code](https://code.claude.com/docs/en/quickstart) signed in to your Claude subscription. An API key alone won't work. Xcode is needed only to build from source.
+Requires an Apple Silicon Mac running macOS 13 or later, and [Claude Code](https://code.claude.com/docs/en/quickstart) signed in to your Claude subscription. An API key alone won't work. Xcode is needed only to build from source.
 
 With Homebrew:
 

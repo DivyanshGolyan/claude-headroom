@@ -11,19 +11,16 @@ permissions:
 
 jobs:
   test:
-    name: Test (${{ matrix.runner }})
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [macos-15, macos-15-intel]
-    runs-on: ${{ matrix.runner }}
+    name: Test Apple Silicon
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: bash test.sh
-      - run: ARCHS="$(uname -m)" bash build.sh
+      - run: bash build.sh
+      - run: test "$(lipo -archs build/Headroom.app/Contents/MacOS/Headroom)" = arm64
 
   release:
-    name: Publish universal app
+    name: Publish Apple Silicon app
     if: startsWith(github.ref, 'refs/tags/v')
     needs: test
     runs-on: macos-15
@@ -43,7 +40,7 @@ jobs:
           cat > build/release-notes.md <<'NOTES'
           Download **Headroom.dmg**, open it, and drag Headroom into Applications.
 
-          The same app supports Apple Silicon and Intel Macs running macOS 13 or later. Sign into Claude Code with your Claude subscription before opening Headroom.
+          Requires an Apple Silicon Mac running macOS 13 or later. Sign into Claude Code with your Claude subscription before opening Headroom.
 
           This build is locally signed, not Apple-notarized. If macOS blocks the first launch, use System Settings → Privacy & Security → Open Anyway. See the repository README for installation and usage.
 

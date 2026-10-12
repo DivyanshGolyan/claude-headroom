@@ -59,6 +59,7 @@ def update(version, checksums, archive, output, metadata):
   desc "Claude quota forecasts in the menu bar"
   homepage "https://github.com/DivyanshGolyan/claude-headroom"
 
+  depends_on arch: :arm64
   depends_on macos: :ventura
 
   app "Headroom.app"

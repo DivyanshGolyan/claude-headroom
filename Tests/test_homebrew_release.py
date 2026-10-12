@@ -46,6 +46,7 @@ class HomebrewReleaseTests(unittest.TestCase):
         self.assertIn('sha256 "%s"' % self.checksum, content)
         self.assertIn('releases/download/v#{version}/Headroom.zip', content)
         self.assertIn('depends_on macos: :ventura', content)
+        self.assertIn('depends_on arch: :arm64', content)
         self.assertNotIn("no_check", content)
         self.assertNotIn("zap", content)
 

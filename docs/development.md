@@ -12,9 +12,9 @@ bash build.sh
 open build/Headroom.app
 ```
 
-`build.sh` creates a locally signed universal app for Apple Silicon and Intel. Set `ARCHS=arm64` or `ARCHS=x86_64` to build only one architecture. Use a single running copy of Headroom; quit an installed copy before opening a development build.
+`build.sh` creates a locally signed Apple Silicon app. Use a single running copy of Headroom; quit an installed copy before opening a development build.
 
-`test.sh` checks forecast boundaries, burst detection, resets, counter corrections, missed observations, overlapping weekly outages, response decoding, clock formatting, VoiceOver wording, tabular digits, and stable widths across times and weekdays. Clock-domain tests advance continuous instants independently of calendar dates to check clock jumps, sleep, cooldowns, freshness, HTTP retry dates, server jitter, and stale cache restoration. Tests use synthetic quota data and do not access Keychain or the network. CI runs on Apple Silicon and Intel macOS 15 runners. Other supported macOS versions have not been exercised in CI.
+`test.sh` checks forecast boundaries, burst detection, resets, counter corrections, missed observations, overlapping weekly outages, response decoding, clock formatting, VoiceOver wording, tabular digits, and stable widths across times and weekdays. Clock-domain tests advance continuous instants independently of calendar dates to check clock jumps, sleep, cooldowns, freshness, HTTP retry dates, server jitter, and stale cache restoration. Tests use synthetic quota data and do not access Keychain or the network. CI runs on an Apple Silicon macOS 15 runner. Other supported macOS versions have not been exercised in CI.
 
 ## Check dropdown alignment
 
@@ -60,7 +60,7 @@ When changing quota rules, preserve immediate outage warnings and the 10% spare 
 bash package.sh
 ```
 
-This builds the universal app, creates `build/Headroom.dmg` and `build/Headroom.zip`, and writes `build/SHA256SUMS`. The disk image contains the app and an Applications shortcut. Verify an extracted app with `codesign --verify --strict`, and confirm its architectures with `lipo -archs`.
+This builds the Apple Silicon app, creates `build/Headroom.dmg` and `build/Headroom.zip`, and writes `build/SHA256SUMS`. The disk image contains the app and an Applications shortcut. Verify an extracted app with `codesign --verify --strict`, and confirm `lipo -archs` reports only `arm64`.
 
 For a release, update `CFBundleShortVersionString` and increment `CFBundleVersion` in `Info.plist`. Commit, then tag the exact version:
 
@@ -69,7 +69,7 @@ git tag v1.1.0
 git push origin main v1.1.0
 ```
 
-The GitHub workflow tests both architectures, checks that the tag matches the bundle version, packages the universal app, and publishes the release files and checksums. It uses GitHub's workflow token; no signing secrets are required. First-launch approval is expected because releases are ad-hoc signed and not Apple-notarized. Follow the README's per-app approval steps; packaging does not change system security settings.
+The GitHub workflow tests the Apple Silicon build, checks that the tag matches the bundle version, packages the app, and publishes the release files and checksums. It uses GitHub's workflow token; no signing secrets are required. First-launch approval is expected because releases are ad-hoc signed and not Apple-notarized. Follow the README's per-app approval steps; packaging does not change system security settings.
 
 After publishing, the Homebrew job downloads that exact release's ZIP and checksum file, verifies the archive, and updates `DivyanshGolyan/homebrew-headroom`. Its SSH deploy key can write only to that tap; the private key is stored in the app repository's `HEADROOM_TAP_DEPLOY_KEY` Actions secret. The updater rejects downgrades and changed checksums for an existing version. Identical retries make no commit.
 
