@@ -23,6 +23,11 @@ enum StatusMenu {
 final class StatusMenuTrigger: NSView {
     var onClick: () -> Void = {}
 
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if NSApp.currentEvent?.modifierFlags.contains(.command) == true { return nil }
+        return super.hitTest(point)
+    }
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) { onClick() }
     override func rightMouseDown(with event: NSEvent) { onClick() }
