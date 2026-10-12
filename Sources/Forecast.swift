@@ -174,6 +174,7 @@ enum Forecast: Equatable {
     case spare(Int, Date)
 
     private static let minimumObservationSpan: TimeInterval = 60
+    private static let serverTimestampResolution: TimeInterval = 1
 
     static func counterObservations(_ counters: [(Date, Double, Date?)]) -> [(Date, Double)] {
         var observations: [(Date, Double)] = []
@@ -189,7 +190,7 @@ enum Forecast: Equatable {
                 }
                 if sameWindow && counter.1 >= previous.1 {
                     total += counter.1 - previous.1
-                } else if !sameWindow && (previous.2.map { $0 <= counter.0 } ?? true)
+                } else if !sameWindow && (previous.2.map { $0.timeIntervalSince(counter.0) < serverTimestampResolution } ?? true)
                     && (counter.2.map { next in previous.2.map { next > $0 } ?? true } ?? true) {
                     // The new counter contributes usage since reset, never a negative delta.
                     total += counter.1

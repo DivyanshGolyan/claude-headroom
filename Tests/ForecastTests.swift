@@ -122,6 +122,26 @@ enum ForecastTests {
                 reset: entry.reset == boundary ? boundary : boundary.addingTimeInterval(7 * 86400), name: "Weekly")])
         }
         expect(Forecast.calculate(samples: weeklyAfterReset, now: now).isGap, "weekly rates also survive counter resets")
+        for fraction in [0.001, 0.5, 0.999] {
+            let fractionalReset = now.addingTimeInterval(fraction)
+            let rolled = [UsageSample(date: now.addingTimeInterval(-1200), used: 70, reset: fractionalReset),
+                UsageSample(date: now.addingTimeInterval(-60), used: 89, reset: fractionalReset),
+                UsageSample(date: now, used: 1, reset: fractionalReset.addingTimeInterval(5 * 3600))]
+            expect(Forecast.counterObservations(rolled.map { ($0.date, $0.used, $0.reset) }).map { $0.1 } == [0, 19, 20],
+                "whole-second receipt retains rate through fractional rollover \(fraction)")
+            expect(Forecast.calculate(samples: rolled, now: now).isGap, "fractional session rollover retains forecast")
+            let weekly = rolled.map { entry in
+                UsageSample(date: entry.date, used: 0, reset: nil, weekly: [QuotaWindow(id: "weekly", used: entry.used,
+                    reset: entry.reset!, name: "Weekly")])
+            }
+            expect(Forecast.calculate(samples: weekly, now: now).isGap, "fractional weekly rollover retains forecast")
+        }
+        for offset in [1.0, 1.001, 60] {
+            let futureReset = now.addingTimeInterval(offset)
+            let rejected = Forecast.counterObservations([(now.addingTimeInterval(-60), 80, futureReset),
+                (now, 1, futureReset.addingTimeInterval(5 * 3600))])
+            expect(rejected.count == 1, "rollover tolerance cannot accept a reset a full second or more in the future")
+        }
         expect(Forecast.gap(gapStart.addingTimeInterval(120), gapEnd).title(now: gapStart, locale: Locale(identifier: "en_US")) == "Out 6:35–7:20", "run-out time rounds down to five minutes")
         expect(Forecast.out(gapEnd).title(now: gapStart, locale: Locale(identifier: "en_US")) == "Out till 7:20", "current exhaustion differs from future exhaustion")
         expect(Forecast.gap(gapStart, gapEnd).title(now: gapStart, locale: Locale(identifier: "en_GB")) == "Out 18:35–19:20", "24-hour locale is preserved")
