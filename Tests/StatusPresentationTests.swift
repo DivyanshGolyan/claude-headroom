@@ -15,7 +15,7 @@ enum StatusPresentationTests {
             }
         }
         for age in [0.0, 300, 360, 361, 601, 900] {
-            for forecast in [Forecast.ready, .onTrack, .spare(20, retry), .gap(now, retry), .out(retry)] {
+            for forecast in [Forecast.ready, .onTrack, .spare(20, retry), .gap(now, retry), .out(retry), .likelyOut(retry)] {
                 for problem in [FetchProblem.rateLimited, .unavailable] {
                     let status = StatusPresentation(forecast: forecast, now: now, age: age,
                         problem: problem, retryAt: retry)

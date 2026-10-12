@@ -27,21 +27,28 @@ import AppKit
         var spareWidths = Set<Int>()
         var gapWidths = Set<Int>()
         var weeklyWidths = Set<Int>()
+        var likelyWidths = Set<Int>()
+        var weeklyLikelyWidths = Set<Int>()
         for hour in 0..<24 {
             for minute in stride(from: 0, to: 60, by: 5) {
                 let end = Calendar.current.date(bySettingHour: hour, minute: minute, second: 0, of: now)!
                 let spare = Forecast.spare(95, end)
+                let likely = Forecast.likelyOut(end)
+                likelyWidths.insert(Int(StatusStyle.width(forecast: likely, title: likely.title(now: now))))
                 let gap = Forecast.gap(end.addingTimeInterval(-3600), end)
                 spareWidths.insert(Int(StatusStyle.width(forecast: spare, title: spare.title(now: now))))
                 gapWidths.insert(Int(StatusStyle.width(forecast: gap, title: gap.title(now: now))))
                 for offset in 0..<7 {
                     let reset = Calendar.current.date(byAdding: .day, value: offset, to: end)!
+                    let likelyWeekly = Forecast.likelyOut(reset, "Weekly")
+                    weeklyLikelyWidths.insert(Int(StatusStyle.width(forecast: likelyWeekly, title: likelyWeekly.title(now: now))))
                     let weekly = Forecast.gap(reset.addingTimeInterval(-3600), reset, "Weekly")
                     weeklyWidths.insert(Int(StatusStyle.width(forecast: weekly, title: weekly.title(now: now))))
                 }
             }
         }
         precondition(spareWidths.count == 1 && gapWidths.count == 1 && weeklyWidths.count == 1, "Widths changed: spare \(spareWidths), gap \(gapWidths), weekly \(weeklyWidths)")
+        precondition(likelyWidths.count == 1 && weeklyLikelyWidths.count == 1, "Predicted outage widths changed across times or weekdays")
         let one = ("11111" as NSString).size(withAttributes: [.font: StatusStyle.font]).width
         let eight = ("88888" as NSString).size(withAttributes: [.font: StatusStyle.font]).width
         precondition(abs(one - eight) < 0.01, "Digits are not tabular")

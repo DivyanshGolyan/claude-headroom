@@ -171,6 +171,7 @@ enum Forecast: Equatable {
     case estimating, awaitingUpdate, stale, ready, onTrack
     case gap(Date, Date, String? = nil)
     case out(Date, String? = nil)
+    case likelyOut(Date, String? = nil)
     case spare(Int, Date)
 
     private static let minimumObservationSpan: TimeInterval = 60
@@ -227,10 +228,15 @@ enum Forecast: Equatable {
         guard (0...maximumSampleAge).contains(now.timeIntervalSince(latest.date)) else { return .stale }
         var gaps: [(Date, Date, String?)] = []
         var sessionSpare: Double?
+        var confirmedUntil: Date?
 
         func evaluate(used: Double, reset: Date, duration: TimeInterval, name: String?, observations: [(Date, Double)]) {
             guard reset > now else { return }
-            if used >= 100 { gaps.append((now, reset, name)); return }
+            if used >= 100 {
+                confirmedUntil = max(confirmedUntil ?? reset, reset)
+                gaps.append((now, reset, name))
+                return
+            }
             let horizon = reset.timeIntervalSince(latest.date)
             let elapsed = duration - horizon
             let initialRate: Double? = elapsed.isFinite && elapsed >= minimumObservationSpan && elapsed <= duration ? used / elapsed : nil
@@ -266,7 +272,11 @@ enum Forecast: Equatable {
             for other in gaps.sorted(by: { $0.0 < $1.0 }) where other.0 <= gap.1 {
                 if other.1 > gap.1 { gap.1 = other.1; gap.2 = other.2 }
             }
-            return gap.0 <= now ? .out(gap.1, gap.2) : .gap(gap.0, gap.1, gap.2)
+            if gap.0 <= now {
+                let confirmed = confirmedUntil.map { $0 >= gap.1 } ?? false
+                return confirmed ? .out(gap.1, gap.2) : .likelyOut(gap.1, gap.2)
+            }
+            return .gap(gap.0, gap.1, gap.2)
         }
         guard let reset = latest.reset else { return .ready }
         guard reset > now else { return .awaitingUpdate }
@@ -277,7 +287,7 @@ enum Forecast: Equatable {
     }
 
     var isGap: Bool {
-        switch self { case .gap, .out: return true; default: return false }
+        switch self { case .gap, .out, .likelyOut: return true; default: return false }
     }
 
     func title(now: Date = Date(), locale: Locale = .current) -> String {
@@ -288,10 +298,13 @@ enum Forecast: Equatable {
         case .ready: return "Ready"
         case .onTrack: return "On track"
         case let .spare(percent, reset): return "\(percent)% spare till \(Clock.time(Clock.displayReset(reset), locale: locale))"
-        case let .out(reset, name):
+        case let .out(reset, name), let .likelyOut(reset, name):
+            let label: String
+            if case .likelyOut = self { label = name.map { $0 + " likely out" } ?? "Likely out" }
+            else { label = name.map { $0 + " out" } ?? "Out" }
             let reset = Clock.displayReset(reset)
             let day = name != nil && !Calendar.current.isDate(reset, inSameDayAs: now)
-            return "\(name.map { $0 + " out" } ?? "Out") till \(Clock.time(reset, day: day, period: name != nil, locale: locale))"
+            return "\(label) till \(Clock.time(reset, day: day, period: name != nil, locale: locale))"
         case let .gap(start, reset, name):
             let reset = Clock.displayReset(reset)
             let rounded = Date(timeIntervalSince1970: floor(start.timeIntervalSince1970 / 300) * 300)
@@ -305,6 +318,7 @@ enum Forecast: Equatable {
         switch self {
         case .awaitingUpdate: return "The previous quota window has ended. Waiting for updated Claude usage."
         case let .gap(start, reset, name): return "\(name ?? "Claude") quota is predicted to run out at \(start.formatted()). Resets at \(Clock.displayReset(reset).formatted())."
+        case let .likelyOut(reset, name): return "\(name ?? "Claude") quota is predicted to be exhausted until \(Clock.displayReset(reset).formatted()). Exhaustion has not been confirmed for this full period."
         case let .out(reset, name): return "\(name ?? "Claude") quota is out until \(Clock.displayReset(reset).formatted())."
         case let .spare(percent, reset): return "An estimated \(percent) percent of Claude quota will remain unused at reset, \(Clock.displayReset(reset).formatted())."
         default: return "Claude usage forecast: \(title())."

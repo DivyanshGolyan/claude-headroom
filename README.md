@@ -29,7 +29,8 @@ Headroom reads your existing Claude Code login from Keychain. If it says **Sign-
 | Menu bar | Meaning |
 |---|---|
 | `Out 6:35–7:20` | At your recent pace, quota will run out before its reset. |
-| `Out till 7:20` | Quota is exhausted, or predicted to be exhausted by now. |
+| `Likely out till 7:20` | Predicted exhaustion has arrived, but the full outage has not been confirmed. |
+| `Out till 7:20` | Observed exhausted quota supports the full displayed outage. |
 | `20% spare till 7:20` | At least 10% is predicted to remain unused at reset. |
 | `On track` | Predicted unused quota is below 10%, with no predicted outage. |
 | `Measuring` | Waiting for live data or a usable observation interval. |

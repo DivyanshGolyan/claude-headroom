@@ -40,6 +40,16 @@ enum ForecastTests {
             expect(abs(start.timeIntervalSince(now) - 7200) < 0.01 && end == reset, "exhaustion and reset timestamps")
         } else { preconditionFailure("Expected gap") }
         expect(forecast(20, 20) == .spare(80, reset), "idle time counts as zero consumption")
+        let approachingLimit = [sample(5, 80), sample(0, 90)]
+        let predictedTime = now.addingTimeInterval(300)
+        expect(Forecast.calculate(samples: approachingLimit, now: now) == .gap(predictedTime, reset), "future exhaustion remains a forecast")
+        let predictedOut = Forecast.calculate(samples: approachingLimit, now: predictedTime)
+        expect(predictedOut.title(now: predictedTime).hasPrefix("Likely out till "), "passing predicted exhaustion does not confirm an outage")
+        expect(predictedOut.accessibilityText.contains("predicted"), "predicted exhaustion remains explicit for VoiceOver")
+        let confirmed = approachingLimit + [UsageSample(date: predictedTime, used: 100, reset: reset)]
+        expect(Forecast.calculate(samples: confirmed, now: predictedTime) == .out(reset), "fresh exhausted reading confirms the outage")
+        let resumed = approachingLimit + [UsageSample(date: predictedTime, used: 90, reset: reset)]
+        expect(!Forecast.calculate(samples: resumed, now: predictedTime).title(now: predictedTime).hasPrefix("Likely out"), "fresh below-limit reading recalculates exhaustion")
         expect(forecast(100, 100) == .out(reset), "already exhausted needs no warm-up")
         expect(forecast(20, 30, reset: now) == .awaitingUpdate, "expired quota waits for updated usage, not another reset")
         expect(Forecast.calculate(samples: [sample(15, 30)], now: now) != .stale, "fifteen-minute observations remain usable")
@@ -160,7 +170,7 @@ enum ForecastTests {
         } else { preconditionFailure("Expected weekly gap") }
         var overlap = weeklyBurst
         overlap[1] = UsageSample(date: now, used: 100, reset: reset, weekly: [weekAfter])
-        expect(Forecast.calculate(samples: overlap, now: now) == .out(weekReset, "Weekly"), "overlapping limits extend the continuous outage to the later reset")
+        expect(Forecast.calculate(samples: overlap, now: now) == .likelyOut(weekReset, "Weekly"), "predicted overlap cannot confirm the full outage duration")
         let weeklyJSON = Data("{\"five_hour\":null,\"limits\":[{\"kind\":\"weekly\",\"percent\":100,\"resets_at\":\"2027-10-12T13:50:00Z\",\"is_active\":true},{\"kind\":\"weekly_scoped\",\"percent\":100,\"resets_at\":\"2027-10-12T13:50:00Z\",\"is_active\":false,\"scope\":{\"model\":{\"display_name\":\"Fable\"}}}]}".utf8)
         expect(try JSONDecoder().decode(UsageResponse.self, from: weeklyJSON).sample(at: now).weekly?.count == 1, "inactive unrelated model limit is excluded")
         do {

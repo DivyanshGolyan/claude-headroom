@@ -14,7 +14,7 @@ struct StatusPresentation {
     init(forecast: Forecast, now: Date, age: TimeInterval, problem: FetchProblem?, retryAt: Date?) {
         let hasCurrentWindow: Bool
         switch forecast {
-        case .ready, .onTrack, .gap, .out, .spare:
+        case .ready, .onTrack, .gap, .out, .likelyOut, .spare:
             hasCurrentWindow = true
         case .estimating, .awaitingUpdate, .stale:
             hasCurrentWindow = false

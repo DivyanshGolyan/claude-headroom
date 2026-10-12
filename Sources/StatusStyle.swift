@@ -56,6 +56,7 @@ enum StatusStyle {
         case let .gap(_, _, name):
             widest = name.map { "\($0) out \(dayTime)–\(dayTime)" } ?? "Out 00:00–00:00"
         case let .out(_, name): widest = name.map { "\($0) out till \(dayTime)" } ?? "Out till 00:00"
+        case let .likelyOut(_, name): widest = name.map { "\($0) likely out till \(dayTime)" } ?? "Likely out till 00:00"
         case .spare: widest = "100% spare till 00:00"
         default: widest = title
         }
