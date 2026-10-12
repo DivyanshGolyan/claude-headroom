@@ -62,6 +62,8 @@ def update(version, checksums, archive, output, metadata):
   depends_on macos: :ventura
 
   app "Headroom.app"
+
+  uninstall quit: "com.divyanshgolyan.headroom"
 end
 ''' % (version, checksum)
     if not output.exists() or output.read_text() != content:
