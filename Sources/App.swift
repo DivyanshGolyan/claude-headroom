@@ -13,7 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var failures = 0
     private var problem: FetchProblem?
     private var problemDetail: String?
-    private var signInAttempt: String?
+    private var signInAttempts = SignInAttempts()
     private var loginRefreshPending = false
     private var loginRefreshTimer: Timer?
     private let historyStore = HistoryStore(url: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -184,19 +184,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func signIn() {
+        let attemptID = signInAttempts.begin()
         do {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Headroom-login-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
                 attributes: [.posixPermissions: 0o700])
             let script = directory.appendingPathComponent("Sign in to Claude.command")
-            let attemptID = UUID().uuidString
             let command = SignInFlow.command(executable: Bundle.main.executableURL!.path, attemptID: attemptID)
             try command.write(to: script, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
-            signInAttempt = attemptID
             guard NSWorkspace.shared.open(script) else { throw UsageError.message("Could not open Terminal.") }
         } catch {
-            signInAttempt = nil
+            signInAttempts.finish(.init(attemptID: attemptID, succeeded: false))
             let alert = NSAlert()
             alert.messageText = "Open Terminal and run: claude auth login"
             alert.informativeText = "After signing in, choose Refresh now in Headroom."
@@ -205,8 +204,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func loginCompleted(_ notification: Notification) {
-        guard let attemptID = notification.object as? String, attemptID == signInAttempt else { return }
-        signInAttempt = nil
+        guard let attemptID = notification.object as? String,
+              let succeeded = notification.userInfo?["succeeded"] as? Bool,
+              signInAttempts.finish(.init(attemptID: attemptID, succeeded: succeeded)) else { return }
         failures = 0
         loginRefreshPending = true
         scheduleLoginRefresh()
@@ -246,9 +246,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 @main
 enum HeadroomApp {
     static func main() {
-        if CommandLine.arguments.dropFirst().first == "--login-completed" {
-            guard let attemptID = SignInFlow.completionID(arguments: CommandLine.arguments) else { exit(64) }
-            SignInFlow.postCompletion(attemptID)
+        let arguments = CommandLine.arguments
+        if arguments.count > 1 && ["--login-completed", "--login-failed"].contains(arguments[1]) {
+            guard let completion = SignInFlow.completion(arguments: arguments) else { exit(64) }
+            SignInFlow.postCompletion(completion)
             return
         }
         let app = NSApplication.shared

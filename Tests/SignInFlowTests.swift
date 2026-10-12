@@ -3,17 +3,36 @@ import Foundation
 @main
 enum SignInFlowTests {
     static func main() throws {
-        if let id = SignInFlow.completionID(arguments: CommandLine.arguments) {
-            SignInFlow.postCompletion(id)
+        if let completion = SignInFlow.completion(arguments: CommandLine.arguments) {
+            SignInFlow.postCompletion(completion)
             return
         }
         let id = UUID().uuidString
-        precondition(SignInFlow.completionID(arguments: ["Headroom", "--login-completed", id]) == id)
+        precondition(SignInFlow.completion(arguments: ["Headroom", "--login-completed", id])?.attemptID == id)
+        precondition(SignInFlow.completion(arguments: ["Headroom", "--login-failed", id])?.succeeded == false)
         for args in [["Headroom"], ["Headroom", "--login-completed"],
                      ["Headroom", "--login-completed", "invalid"],
                      ["Headroom", "--login-completed", id, "extra"]] {
-            precondition(SignInFlow.completionID(arguments: args) == nil)
+            precondition(SignInFlow.completion(arguments: args) == nil)
         }
+        for olderSucceedsFirst in [true, false] {
+            var attempts = SignInAttempts()
+            let older = attempts.begin()
+            let newer = attempts.begin()
+            let success = SignInFlow.Completion(attemptID: older, succeeded: true)
+            let cancellation = SignInFlow.Completion(attemptID: newer, succeeded: false)
+            if olderSucceedsFirst {
+                precondition(attempts.finish(success))
+                precondition(!attempts.finish(cancellation))
+            } else {
+                precondition(!attempts.finish(cancellation))
+                precondition(attempts.finish(success))
+            }
+            precondition(attempts.outstanding.isEmpty)
+            precondition(!attempts.finish(success), "duplicate completion cannot trigger another fetch")
+            precondition(!attempts.finish(.init(attemptID: UUID().uuidString, succeeded: true)))
+        }
+        print("PASS overlapping login attempts retain every success and retire failures in either completion order")
 
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("Headroom sign-in's test-\(id)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -43,14 +62,11 @@ enum SignInFlowTests {
             process.waitUntilExit()
             precondition(process.terminationStatus == 0)
             precondition(!FileManager.default.fileExists(atPath: directory.path), "finished attempts clean up their scripts")
-            if exitCode == 0 {
-                let arguments = try String(contentsOf: result, encoding: .utf8)
-                precondition(arguments == "--login-completed\n\(id)\n")
-            } else {
-                precondition(!FileManager.default.fileExists(atPath: result.path), "failed/cancelled login must not refresh")
-            }
+            let arguments = try String(contentsOf: result, encoding: .utf8)
+            let outcome = exitCode == 0 ? "--login-completed" : "--login-failed"
+            precondition(arguments == "\(outcome)\n\(id)\n")
         }
-        print("PASS sign-in success alone triggers completion; cancellation, failure, quoted paths and cleanup work")
+        print("PASS sign-in outcomes distinguish success from cancellation/failure; quoted paths and cleanup work")
 
         var received: String?
         let observer = DistributedNotificationCenter.default().addObserver(forName: SignInFlow.notification,
