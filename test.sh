@@ -6,6 +6,8 @@ swiftc -swift-version 5 Sources/Forecast.swift Tests/ForecastTests.swift -o buil
 build/forecast-tests
 swiftc -swift-version 5 Sources/Forecast.swift Sources/StatusPresentation.swift Tests/StatusPresentationTests.swift -o build/status-presentation-tests
 build/status-presentation-tests
+swiftc -swift-version 5 Sources/StatusMenu.swift Tests/MenuTriggerTests.swift -o build/menu-trigger-tests
+build/menu-trigger-tests
 swiftc -swift-version 5 Sources/Forecast.swift Sources/RefreshGate.swift Sources/HistoryStore.swift Tests/EfficiencyTests.swift -o build/efficiency-tests
 build/efficiency-tests
 swiftc -swift-version 5 Sources/Forecast.swift Sources/RefreshGate.swift Sources/RuntimeTimeline.swift Sources/HTTPDate.swift Tests/ClockDomainTests.swift -o build/clock-domain-tests

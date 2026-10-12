@@ -8,12 +8,17 @@ final class MenuProbe: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var failed = false
     private var openMenu: NSMenu?
     private var inspected = false
+    private var rightClick = false
+    private var pendingMenu: NSMenu?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: ["NSStatusItem Preferred Position HeadroomMenuTests": 0])
         item = NSStatusBar.system.statusItem(withLength: widths[0])
         item.autosaveName = "HeadroomMenuTests"
         item.button!.title = "Headroom test"
+        StatusMenu.installTrigger(on: item.button!) { [unowned self] in
+            if let menu = self.pendingMenu { StatusMenu.present(menu, from: self.item.button!) }
+        }
         runNext()
     }
 
@@ -28,23 +33,30 @@ final class MenuProbe: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         menu.addItem(withTitle: "Usage details", action: nil, keyEquivalent: "")
         menu.addItem(withTitle: "Launch at login", action: nil, keyEquivalent: "").state = .on
+        pendingMenu = menu
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             if CommandLine.arguments.contains("--native") {
                 self.item.menu = menu
                 self.item.button!.performClick(nil)
                 self.item.menu = nil
             } else {
-                StatusMenu.present(menu, from: self.item.button!)
+                let button = self.item.button!
+                let location = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+                let event = NSEvent.mouseEvent(with: self.rightClick ? .rightMouseDown : .leftMouseDown,
+                    location: location, modifierFlags: [], timestamp: 0, windowNumber: button.window!.windowNumber,
+                    context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+                button.window!.sendEvent(event)
             }
             self.check(self.inspected, "menu was presented and inspected")
             self.check(!self.item.button!.isHighlighted, "button highlight clears after dismissal")
-            self.index += 1
+            if self.rightClick { self.index += 1 }
+            self.rightClick.toggle()
             self.runNext()
         }
     }
 
     private func check(_ condition: Bool, _ message: String) {
-        print("\(condition ? "PASS" : "FAIL") width=\(widths[index]) \(message)")
+        print("\(condition ? "PASS" : "FAIL") width=\(widths[index]) \(rightClick ? "right" : "left") click: \(message)")
         if !condition { failed = true }
     }
 

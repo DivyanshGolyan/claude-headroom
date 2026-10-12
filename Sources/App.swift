@@ -29,7 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.autoenablesItems = false
         item.button?.target = self
         item.button?.action = #selector(showMenu)
-        item.button?.sendAction(on: [.leftMouseDown, .rightMouseDown])
+        if let button = item.button {
+            StatusMenu.installTrigger(on: button) { [weak self] in self?.showMenu() }
+        }
         item.button?.setAccessibilityLabel("Claude usage forecast")
         render()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
