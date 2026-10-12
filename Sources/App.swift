@@ -4,13 +4,18 @@ import ServiceManagement
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var item: NSStatusItem!
+    private let menu = NSMenu()
+    private var menuIsOpen = false
     private var timer: Timer?
     private let client = UsageClient()
     private var timeline = RuntimeTimeline()
     private var refreshGate = RefreshGate()
     private var failures = 0
-    private var problem: String?
+    private var problem: FetchProblem?
     private var problemDetail: String?
+    private var signInAttempts = SignInAttempts()
+    private var loginRefreshPending = false
+    private var loginRefreshTimer: Timer?
     private let historyStore = HistoryStore(url: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Headroom/history.json"))
 
@@ -23,10 +28,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.button?.image = claudeMenuBarImage()
         item.button?.imagePosition = .imageLeading
         item.button?.imageHugsTitle = true
-        let menu = NSMenu()
         menu.delegate = self
         menu.autoenablesItems = false
-        item.menu = menu
+        DistributedNotificationCenter.default().addObserver(self, selector: #selector(loginCompleted(_:)),
+            name: SignInFlow.notification, object: nil)
+        item.button?.target = self
+        item.button?.action = #selector(showMenu)
+        if let button = item.button {
+            StatusMenu.installTrigger(on: button) { [weak self] in self?.showMenu() }
+        }
         item.button?.setAccessibilityLabel("Claude usage forecast")
         render()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
@@ -53,7 +63,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func fetch(manual: Bool) {
         render()
-        guard refreshGate.begin(at: ContinuousClock.now, manual: manual) else { return }
+        guard refreshGate.begin(at: ContinuousClock.now, manual: manual || loginRefreshPending) else { return }
+        loginRefreshPending = false
+        loginRefreshTimer?.invalidate()
+        loginRefreshTimer = nil
         Task {
             var nextAttempt: ContinuousClock.Instant?
             var rateLimitUntil: ContinuousClock.Instant?
@@ -71,16 +84,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 nextAttempt = ContinuousClock.now.advanced(by: backoff)
                 switch error {
                 case UsageError.signedOut:
-                    problem = "Signed out"
-                    problemDetail = "Sign into Claude Code, then refresh. Headroom does not launch Claude or change credentials."
+                    problem = .signedOut
+                    problemDetail = "The Claude credential is missing or was rejected. Choose Sign in to Claude, complete sign-in, then refresh."
                     nextAttempt = ContinuousClock.now.advanced(by: .seconds(300))
                 case let UsageError.rateLimited(delay, receivedAt):
-                    problem = "Usage rate limited"
+                    problem = .rateLimited
                     problemDetail = "Claude asked Headroom to wait. Refresh now also respects this cooldown."
                     nextAttempt = receivedAt.advanced(by: max(backoff, delay))
                     rateLimitUntil = nextAttempt
                 default:
-                    problem = "Usage unavailable"
+                    problem = .unavailable
                     problemDetail = (error as? UsageError).flatMap {
                         if case let .message(message) = $0 { return message }
                         return nil
@@ -89,39 +102,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             refreshGate.finish(nextAttempt: nextAttempt, rateLimitUntil: rateLimitUntil)
             render()
+            if loginRefreshPending { scheduleLoginRefresh() }
         }
     }
 
     private func render() {
+        guard !menuIsOpen else { return }
         let instant = ContinuousClock.now
-        let now = timeline.calendarNow(at: instant)
+        let now = Date()
         let forecast = timeline.forecast(at: instant)
         let age = timeline.age(at: instant)
-        let signedOut = problem == "Signed out"
-        let title = signedOut ? "Signed out" : age > 600 && problem != nil ? "No data" : forecast.title(now: now)
+        let retryAt = refreshGate.nextAttemptDate(at: instant, wallNow: now)
+        let presentation = StatusPresentation(forecast: forecast, now: now, age: age, problem: problem, retryAt: retryAt)
+        let title = presentation.title
         guard let button = item.button else { return }
         if button.title != title { button.title = title }
-        let disabled = !signedOut && age > 180 && age <= 600
+        let disabled = presentation.appearsDisabled
         if button.appearsDisabled != disabled { button.appearsDisabled = disabled }
-        let image = claudeMenuBarImage(warning: !signedOut && forecast.isGap)
+        let image = claudeMenuBarImage(warning: presentation.showsForecast && forecast.isGap)
         if button.image !== image { button.image = image }
-        let width = StatusStyle.width(forecast: signedOut ? .stale : forecast, title: title)
+        let width = StatusStyle.width(forecast: presentation.showsForecast ? forecast : .stale, title: title)
         if item.length != width { item.length = width }
-        var detail = "Headroom · Claude quota\nInitial estimate uses average consumption since the quota window began. After a minute of live observations, uses the faster of the last 10 minutes and a 15–60 minute baseline, including idle time. Assumes this pace continues.\n"
+        var detail = "Headroom · Claude quota\nUses the faster of the last 10 and 60 minutes of observed usage, including idle time and previous quota windows. Without a minute of observations, estimates pace from current-window consumption. Assumes this pace continues.\n"
         if let last = timeline.history.samples.last {
             detail += "Last updated: \(last.date.formatted(date: .omitted, time: .standard))\n"
-            if let reset = last.reset { detail += "Reset: \(Clock.displayReset(reset).formatted(date: .abbreviated, time: .shortened))\n" }
+            detail += StatusPresentation.usageDetail(sample: last, now: timeline.calendarNow(at: instant)) + "\n"
         }
         if forecast == .estimating { detail += "Needs a usable window start or live observations at least one minute apart.\n" }
         if let problemDetail {
             detail += problemDetail + "\n"
-            if let next = refreshGate.nextAttemptDate(at: instant, wallNow: Date()) {
-                detail += "Next attempt: \(next.formatted(date: .omitted, time: .shortened))\n"
+            if let retryAt {
+                detail += "Next attempt: \(Clock.deadline(retryAt, relativeTo: now, seconds: true))\n"
             }
         }
         detail += "Click for Refresh now, Launch at login, and Quit."
         if button.toolTip != detail { button.toolTip = detail }
-        let label = signedOut ? "Claude is signed out. Sign into Claude Code." : title == "No data" ? "Claude usage data is unavailable." : forecast.accessibilityText
+        let label = presentation.accessibilityText
         if button.accessibilityLabel() != label { button.setAccessibilityLabel(label) }
         let value = age > 180 ? "Last successful update was more than three minutes ago." : ""
         if button.accessibilityValue() as? String != value { button.setAccessibilityValue(value) }
@@ -131,15 +147,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         try? historyStore.save(timeline.snapshot)
     }
 
+    @objc private func showMenu() {
+        guard let button = item.button else { return }
+        menuIsOpen = true
+        defer {
+            menuIsOpen = false
+            render()
+        }
+        StatusMenu.present(menu, from: button)
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
-        render()
         menu.removeAllItems()
-        let detail: String
-        if let last = timeline.history.samples.last, let reset = last.reset {
-            detail = "\(Int(last.used))% used · resets \(Clock.time(Clock.displayReset(reset)))"
-        } else { detail = timeline.history.samples.isEmpty ? "Waiting for usage data" : "No active five-hour window" }
+        var detail = StatusPresentation.usageDetail(sample: timeline.history.samples.last,
+            now: timeline.calendarNow(at: ContinuousClock.now))
+        if problem == .signedOut { detail = "Last update · " + detail }
         menu.addItem(withTitle: detail, action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(.separator())
+        if problem == .signedOut {
+            let signIn = menu.addItem(withTitle: "Sign in to Claude…", action: #selector(signIn), keyEquivalent: "")
+            signIn.target = self
+        }
         let refreshItem = menu.addItem(withTitle: "Refresh now", action: #selector(manualRefresh), keyEquivalent: "")
         refreshItem.target = self
         refreshItem.isEnabled = refreshGate.allowsManual(at: ContinuousClock.now)
@@ -153,6 +181,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func manualRefresh() {
         fetch(manual: true)
+    }
+
+    @objc private func signIn() {
+        let attemptID = signInAttempts.begin()
+        do {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Headroom-login-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700])
+            let script = directory.appendingPathComponent("Sign in to Claude.command")
+            let command = SignInFlow.command(executable: Bundle.main.executableURL!.path, attemptID: attemptID)
+            try command.write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+            guard NSWorkspace.shared.open(script) else { throw UsageError.message("Could not open Terminal.") }
+        } catch {
+            signInAttempts.finish(.init(attemptID: attemptID, succeeded: false))
+            let alert = NSAlert()
+            alert.messageText = "Open Terminal and run: claude auth login"
+            alert.informativeText = "After signing in, choose Refresh now in Headroom."
+            alert.runModal()
+        }
+    }
+
+    @objc private func loginCompleted(_ notification: Notification) {
+        guard let attemptID = notification.object as? String,
+              let succeeded = notification.userInfo?["succeeded"] as? Bool,
+              signInAttempts.finish(.init(attemptID: attemptID, succeeded: succeeded)) else { return }
+        failures = 0
+        loginRefreshPending = true
+        scheduleLoginRefresh()
+    }
+
+    private func scheduleLoginRefresh() {
+        guard loginRefreshPending, !refreshGate.busy else { return }
+        let now = ContinuousClock.now
+        let delay = now.duration(to: refreshGate.earliestManualAttempt(at: now)).timeInterval
+        if delay <= 0 { fetch(manual: true); return }
+        loginRefreshTimer?.invalidate()
+        loginRefreshTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.scheduleLoginRefresh() }
+        }
     }
     @objc private func quit() { NSApp.terminate(nil) }
 
@@ -178,6 +246,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 @main
 enum HeadroomApp {
     static func main() {
+        let arguments = CommandLine.arguments
+        if arguments.count > 1 && ["--login-completed", "--login-failed"].contains(arguments[1]) {
+            guard let completion = SignInFlow.completion(arguments: arguments) else { exit(64) }
+            SignInFlow.postCompletion(completion)
+            return
+        }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate

@@ -22,7 +22,7 @@ enum ForecastTests {
         let quarterReset = now.addingTimeInterval(3.75 * 3600)
         expect(Forecast.calculate(samples: [sample(0, 90, reset: quarterReset)], now: now) == .gap(now.addingTimeInterval(500), quarterReset), "90 percent used in a quarter window predicts eight minutes twenty seconds left")
         expect(Forecast.calculate(samples: [sample(0, 25, reset: quarterReset)], now: now) == .onTrack, "one observation at the window pace is on track")
-        expect(Forecast.calculate(samples: [sample(0, 0)], now: now) == .spare(100, reset), "zero observed usage gives an initial spare estimate")
+        expect(Forecast.calculate(samples: [sample(0, 0)], now: now) == .ready, "zero usage without a measured rate is ready, not a spare forecast")
         for horizon: TimeInterval in [17941, 18000, 18060] {
             expect(Forecast.calculate(samples: [sample(0, 20, reset: now.addingTimeInterval(horizon))], now: now) == .estimating, "unusable inferred window start remains measuring")
         }
@@ -41,11 +41,12 @@ enum ForecastTests {
         } else { preconditionFailure("Expected gap") }
         expect(forecast(20, 20) == .spare(80, reset), "idle time counts as zero consumption")
         expect(forecast(100, 100) == .out(reset), "already exhausted needs no warm-up")
-        expect(forecast(20, 30, reset: now) == .awaitingReset, "expired quota is never reused")
-        expect(Forecast.calculate(samples: [sample(11, 30)], now: now) == .stale, "stale measurements are marked")
+        expect(forecast(20, 30, reset: now) == .awaitingUpdate, "expired quota waits for updated usage, not another reset")
+        expect(Forecast.calculate(samples: [sample(15, 30)], now: now) != .stale, "fifteen-minute observations remain usable")
+        expect(Forecast.calculate(samples: [sample(15.0 + 1.0 / 60, 30)], now: now) == .stale, "observations older than fifteen minutes are stale")
 
         let oldReset = reset.addingTimeInterval(-5 * 3600)
-        expect(Forecast.calculate(samples: [sample(30, 90, reset: oldReset), sample(0, 10)], now: now) == .spare(75, reset), "new quota window uses its own cumulative total")
+        expect(Forecast.calculate(samples: [sample(30, 90, reset: oldReset), sample(0, 10)], now: now) == .spare(30, reset), "new allowance uses current total while the rate measures usage across reset")
         let recent = [sample(40, 0), sample(20, 20), sample(0, 20)]
         // Baseline at -30m is 10%, so the last 30m rate is 10% / 30m.
         expect(abs(Forecast.rate(recent.map { ($0.date, $0.used) }, minutes: 30)! - 10.0 / 1800) < 0.000001, "interpolates a lookback cutoff")
@@ -104,7 +105,43 @@ enum ForecastTests {
         expect(Forecast.calculate(samples: correction, now: now) == .spare(70, reset), "counter correction discards old rates and uses corrected cumulative total")
         expect(Forecast.calculate(samples: [sample(10, 10), sample(0, 12)], now: now) != .estimating, "missed observations preserve measured usage")
         let oldWindow = [sample(10, 80, reset: oldReset), sample(0, 5)]
-        expect(Forecast.calculate(samples: oldWindow, now: now) == .spare(85, reset), "session reset never borrows the previous window rate")
+        expect(Forecast.calculate(samples: oldWindow, now: now) == .onTrack, "cross-reset usage contributes to the rolling consumption rate")
+        let boundary = now.addingTimeInterval(-60)
+        let nextReset = boundary.addingTimeInterval(5 * 3600)
+        let continuous = [sample(21, 70, reset: boundary), sample(1, 90, reset: boundary), sample(0, 1, reset: nextReset)]
+        let observations = Forecast.counterObservations(continuous.map { ($0.date, $0.used, $0.reset) })
+        expect(observations.map { $0.1 } == [0, 20, 21], "counter reset preserves cumulative observed consumption")
+        expect(abs(Forecast.rate(observations, minutes: 10)! - 1.0 / 60) < 1e-12, "ten-minute rate is continuous across reset")
+        if case let .gap(start, end, _) = Forecast.calculate(samples: continuous, now: now) {
+            expect(abs(start.timeIntervalSince(now) - 99 * 60) < 0.01 && end == nextReset, "previous-window pace forecasts current-window exhaustion")
+        } else { preconditionFailure("Continuous heavy usage must predict a gap after reset") }
+        let idleAfterReset = [sample(21, 70, reset: boundary), sample(1, 90, reset: boundary), sample(0, 0, reset: nextReset)]
+        expect(Forecast.calculate(samples: idleAfterReset, now: now).isGap, "a zero counter after reset does not erase recent heavy usage")
+        let weeklyAfterReset = continuous.map { entry in
+            UsageSample(date: entry.date, used: 0, reset: nil, weekly: [QuotaWindow(id: "weekly", used: entry.used,
+                reset: entry.reset == boundary ? boundary : boundary.addingTimeInterval(7 * 86400), name: "Weekly")])
+        }
+        expect(Forecast.calculate(samples: weeklyAfterReset, now: now).isGap, "weekly rates also survive counter resets")
+        for fraction in [0.001, 0.5, 0.999] {
+            let fractionalReset = now.addingTimeInterval(fraction)
+            let rolled = [UsageSample(date: now.addingTimeInterval(-1200), used: 70, reset: fractionalReset),
+                UsageSample(date: now.addingTimeInterval(-60), used: 89, reset: fractionalReset),
+                UsageSample(date: now, used: 1, reset: fractionalReset.addingTimeInterval(5 * 3600))]
+            expect(Forecast.counterObservations(rolled.map { ($0.date, $0.used, $0.reset) }).map { $0.1 } == [0, 19, 20],
+                "whole-second receipt retains rate through fractional rollover \(fraction)")
+            expect(Forecast.calculate(samples: rolled, now: now).isGap, "fractional session rollover retains forecast")
+            let weekly = rolled.map { entry in
+                UsageSample(date: entry.date, used: 0, reset: nil, weekly: [QuotaWindow(id: "weekly", used: entry.used,
+                    reset: entry.reset!, name: "Weekly")])
+            }
+            expect(Forecast.calculate(samples: weekly, now: now).isGap, "fractional weekly rollover retains forecast")
+        }
+        for offset in [1.0, 1.001, 60] {
+            let futureReset = now.addingTimeInterval(offset)
+            let rejected = Forecast.counterObservations([(now.addingTimeInterval(-60), 80, futureReset),
+                (now, 1, futureReset.addingTimeInterval(5 * 3600))])
+            expect(rejected.count == 1, "rollover tolerance cannot accept a reset a full second or more in the future")
+        }
         expect(Forecast.gap(gapStart.addingTimeInterval(120), gapEnd).title(now: gapStart, locale: Locale(identifier: "en_US")) == "Out 6:35–7:20", "run-out time rounds down to five minutes")
         expect(Forecast.out(gapEnd).title(now: gapStart, locale: Locale(identifier: "en_US")) == "Out till 7:20", "current exhaustion differs from future exhaustion")
         expect(Forecast.gap(gapStart, gapEnd).title(now: gapStart, locale: Locale(identifier: "en_GB")) == "Out 18:35–19:20", "24-hour locale is preserved")

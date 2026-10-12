@@ -6,6 +6,10 @@ struct RefreshGate {
     private(set) var rateLimitUntil: ContinuousClock.Instant?
     private var earliestStart: ContinuousClock.Instant?
 
+    func earliestManualAttempt(at now: ContinuousClock.Instant) -> ContinuousClock.Instant {
+        max(now, earliestStart ?? now, rateLimitUntil ?? now)
+    }
+
     func allowsManual(at now: ContinuousClock.Instant) -> Bool {
         !busy && (earliestStart.map { now >= $0 } ?? true)
             && (rateLimitUntil.map { now >= $0 } ?? true)

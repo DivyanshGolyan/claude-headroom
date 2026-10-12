@@ -109,6 +109,21 @@ enum UsageError: Error {
 }
 
 enum Clock {
+    static func deadline(_ date: Date, relativeTo now: Date, seconds: Bool = false,
+        locale: Locale = .current, timeZone: TimeZone = .current) -> String {
+        var calendar = Calendar.current
+        calendar.timeZone = timeZone
+        var style = Date.FormatStyle(date: .omitted, time: seconds ? .standard : .shortened,
+            locale: locale, calendar: calendar, timeZone: timeZone)
+        if !calendar.isDate(date, inSameDayAs: now) {
+            style = style.day().month(.abbreviated)
+            if calendar.component(.year, from: date) != calendar.component(.year, from: now) {
+                style = style.year()
+            }
+        }
+        return date.formatted(style)
+    }
+
     static func displayReset(_ date: Date) -> Date {
         Date(timeIntervalSince1970: (date.timeIntervalSince1970 / 60).rounded() * 60)
     }
@@ -152,12 +167,43 @@ enum Clock {
 }
 
 enum Forecast: Equatable {
-    case estimating, awaitingReset, stale, ready, onTrack
+    static let maximumSampleAge: TimeInterval = 15 * 60
+    case estimating, awaitingUpdate, stale, ready, onTrack
     case gap(Date, Date, String? = nil)
     case out(Date, String? = nil)
     case spare(Int, Date)
 
     private static let minimumObservationSpan: TimeInterval = 60
+    private static let serverTimestampResolution: TimeInterval = 1
+
+    static func counterObservations(_ counters: [(Date, Double, Date?)]) -> [(Date, Double)] {
+        var observations: [(Date, Double)] = []
+        var previous: (Date, Double, Date?)?
+        var total = 0.0
+        for counter in counters {
+            if let previous {
+                let sameWindow: Bool
+                switch (previous.2, counter.2) {
+                case let (left?, right?): sameWindow = abs(left.timeIntervalSince(right)) < 60
+                case (nil, nil): sameWindow = true
+                default: sameWindow = false
+                }
+                if sameWindow && counter.1 >= previous.1 {
+                    total += counter.1 - previous.1
+                } else if !sameWindow && (previous.2.map { $0.timeIntervalSince(counter.0) < serverTimestampResolution } ?? true)
+                    && (counter.2.map { next in previous.2.map { next > $0 } ?? true } ?? true) {
+                    // The new counter contributes usage since reset, never a negative delta.
+                    total += counter.1
+                } else {
+                    observations.removeAll()
+                    total = 0
+                }
+            }
+            observations.append((counter.0, total))
+            previous = counter
+        }
+        return observations
+    }
 
     static func rate(_ observations: [(Date, Double)], minutes: Double) -> Double? {
         guard let first = observations.first, let latest = observations.last,
@@ -178,7 +224,7 @@ enum Forecast: Equatable {
 
     static func calculate(samples: [UsageSample], now: Date) -> Forecast {
         guard let latest = samples.last else { return .estimating }
-        guard (0...600).contains(now.timeIntervalSince(latest.date)) else { return .stale }
+        guard (0...maximumSampleAge).contains(now.timeIntervalSince(latest.date)) else { return .stale }
         var gaps: [(Date, Date, String?)] = []
         var sessionSpare: Double?
 
@@ -186,13 +232,13 @@ enum Forecast: Equatable {
             guard reset > now else { return }
             if used >= 100 { gaps.append((now, reset, name)); return }
             let horizon = reset.timeIntervalSince(latest.date)
-            let longMinutes = min(60, max(15, horizon / 60))
             let elapsed = duration - horizon
             let initialRate: Double? = elapsed.isFinite && elapsed >= minimumObservationSpan && elapsed <= duration ? used / elapsed : nil
-            guard let long = rate(observations, minutes: longMinutes) ?? initialRate else { return }
+            guard let long = rate(observations, minutes: 60) ?? initialRate else { return }
             let short = rate(observations, minutes: 10) ?? long
             // Any shortfall counts. Use the faster pace for both warnings and spare.
             let burn = max(short, long)
+            guard used > 0 || burn > 0 else { return }
             // Remove floating-point roundoff at exact thresholds, not real shortfalls.
             let spare = ((100 - used - burn * horizon) * 1e9).rounded() / 1e9
             if name == nil { sessionSpare = spare }
@@ -202,23 +248,19 @@ enum Forecast: Equatable {
         }
 
         if let reset = latest.reset {
-            var current: [(Date, Double)] = []
-            for sample in samples.reversed() {
-                guard let previousReset = sample.reset, abs(previousReset.timeIntervalSince(reset)) < 60 else { break }
-                if let newer = current.last, sample.used > newer.1 { break }
-                current.append((sample.date, sample.used))
-            }
-            evaluate(used: latest.used, reset: reset, duration: 5 * 3600, name: nil, observations: current.reversed())
+            let observations = counterObservations(samples.map { ($0.date, $0.used, $0.reset) })
+            evaluate(used: latest.used, reset: reset, duration: 5 * 3600, name: nil, observations: observations)
         }
         for window in latest.weekly ?? [] {
-            var observations: [(Date, Double)] = []
-            for sample in samples.reversed() {
-                guard let previous = sample.weekly?.first(where: { $0.id == window.id }),
-                      abs(previous.reset.timeIntervalSince(window.reset)) < 60 else { break }
-                if let newer = observations.last, previous.used > newer.1 { break }
-                observations.append((sample.date, previous.used))
+            var counters: [(Date, Double, Date?)] = []
+            for sample in samples {
+                guard let previous = sample.weekly?.first(where: { $0.id == window.id }) else {
+                    counters.removeAll()
+                    continue
+                }
+                counters.append((sample.date, previous.used, previous.reset))
             }
-            evaluate(used: window.used, reset: window.reset, duration: 7 * 86400, name: window.name, observations: observations.reversed())
+            evaluate(used: window.used, reset: window.reset, duration: 7 * 86400, name: window.name, observations: counterObservations(counters))
         }
         if var gap = gaps.sorted(by: { $0.0 < $1.0 }).first {
             for other in gaps.sorted(by: { $0.0 < $1.0 }) where other.0 <= gap.1 {
@@ -227,7 +269,8 @@ enum Forecast: Equatable {
             return gap.0 <= now ? .out(gap.1, gap.2) : .gap(gap.0, gap.1, gap.2)
         }
         guard let reset = latest.reset else { return .ready }
-        guard reset > now else { return .awaitingReset }
+        guard reset > now else { return .awaitingUpdate }
+        if latest.used == 0 && sessionSpare == nil { return .ready }
         guard let spare = sessionSpare else { return .estimating }
         if spare >= 10 { return .spare(Int(floor(spare / 5)) * 5, reset) }
         return .onTrack
@@ -240,7 +283,7 @@ enum Forecast: Equatable {
     func title(now: Date = Date(), locale: Locale = .current) -> String {
         switch self {
         case .estimating: return "Measuring"
-        case .awaitingReset: return "Awaiting reset"
+        case .awaitingUpdate: return "Waiting for usage"
         case .stale: return "No data"
         case .ready: return "Ready"
         case .onTrack: return "On track"
@@ -260,6 +303,7 @@ enum Forecast: Equatable {
 
     var accessibilityText: String {
         switch self {
+        case .awaitingUpdate: return "The previous quota window has ended. Waiting for updated Claude usage."
         case let .gap(start, reset, name): return "\(name ?? "Claude") quota is predicted to run out at \(start.formatted()). Resets at \(Clock.displayReset(reset).formatted())."
         case let .out(reset, name): return "\(name ?? "Claude") quota is out until \(Clock.displayReset(reset).formatted())."
         case let .spare(percent, reset): return "An estimated \(percent) percent of Claude quota will remain unused at reset, \(Clock.displayReset(reset).formatted())."
