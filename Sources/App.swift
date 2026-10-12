@@ -107,12 +107,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if button.image !== image { button.image = image }
         let width = StatusStyle.width(forecast: signedOut ? .stale : forecast, title: title)
         if item.length != width { item.length = width }
-        var detail = "Headroom · Claude quota\nForecast uses the faster of the last 10 minutes and a 15–60 minute baseline, including idle time. Assumes this pace continues.\n"
+        var detail = "Headroom · Claude quota\nInitial estimate uses average consumption since the quota window began. After a minute of live observations, uses the faster of the last 10 minutes and a 15–60 minute baseline, including idle time. Assumes this pace continues.\n"
         if let last = timeline.history.samples.last {
             detail += "Last updated: \(last.date.formatted(date: .omitted, time: .standard))\n"
             if let reset = last.reset { detail += "Reset: \(Clock.displayReset(reset).formatted(date: .abbreviated, time: .shortened))\n" }
         }
-        if forecast == .estimating { detail += "Needs five minutes of observations in this quota window.\n" }
+        if forecast == .estimating { detail += "Needs a usable window start or live observations at least one minute apart.\n" }
         if let problemDetail {
             detail += problemDetail + "\n"
             if let next = refreshGate.nextAttemptDate(at: instant, wallNow: Date()) {

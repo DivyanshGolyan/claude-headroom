@@ -157,9 +157,11 @@ enum Forecast: Equatable {
     case out(Date, String? = nil)
     case spare(Int, Date)
 
+    private static let minimumObservationSpan: TimeInterval = 60
+
     static func rate(_ observations: [(Date, Double)], minutes: Double) -> Double? {
         guard let first = observations.first, let latest = observations.last,
-              latest.0.timeIntervalSince(first.0) >= 300 else { return nil }
+              latest.0.timeIntervalSince(first.0) >= minimumObservationSpan else { return nil }
         let cutoff = latest.0.addingTimeInterval(-minutes * 60)
         var baseline = first
         for (left, right) in zip(observations, observations.dropFirst()) where left.0 <= cutoff {
@@ -170,7 +172,7 @@ enum Forecast: Equatable {
             }
         }
         let elapsed = latest.0.timeIntervalSince(baseline.0)
-        guard elapsed >= 300 else { return nil }
+        guard elapsed >= minimumObservationSpan else { return nil }
         return max(0, latest.1 - baseline.1) / elapsed
     }
 
@@ -180,12 +182,14 @@ enum Forecast: Equatable {
         var gaps: [(Date, Date, String?)] = []
         var sessionSpare: Double?
 
-        func evaluate(used: Double, reset: Date, name: String?, observations: [(Date, Double)]) {
+        func evaluate(used: Double, reset: Date, duration: TimeInterval, name: String?, observations: [(Date, Double)]) {
             guard reset > now else { return }
             if used >= 100 { gaps.append((now, reset, name)); return }
             let horizon = reset.timeIntervalSince(latest.date)
             let longMinutes = min(60, max(15, horizon / 60))
-            guard let long = rate(observations, minutes: longMinutes) else { return }
+            let elapsed = duration - horizon
+            let initialRate: Double? = elapsed.isFinite && elapsed >= minimumObservationSpan && elapsed <= duration ? used / elapsed : nil
+            guard let long = rate(observations, minutes: longMinutes) ?? initialRate else { return }
             let short = rate(observations, minutes: 10) ?? long
             // Any shortfall counts. Use the faster pace for both warnings and spare.
             let burn = max(short, long)
@@ -204,7 +208,7 @@ enum Forecast: Equatable {
                 if let newer = current.last, sample.used > newer.1 { break }
                 current.append((sample.date, sample.used))
             }
-            evaluate(used: latest.used, reset: reset, name: nil, observations: current.reversed())
+            evaluate(used: latest.used, reset: reset, duration: 5 * 3600, name: nil, observations: current.reversed())
         }
         for window in latest.weekly ?? [] {
             var observations: [(Date, Double)] = []
@@ -214,7 +218,7 @@ enum Forecast: Equatable {
                 if let newer = observations.last, previous.used > newer.1 { break }
                 observations.append((sample.date, previous.used))
             }
-            evaluate(used: window.used, reset: window.reset, name: window.name, observations: observations.reversed())
+            evaluate(used: window.used, reset: window.reset, duration: 7 * 86400, name: window.name, observations: observations.reversed())
         }
         if var gap = gaps.sorted(by: { $0.0 < $1.0 }).first {
             for other in gaps.sorted(by: { $0.0 < $1.0 }) where other.0 <= gap.1 {

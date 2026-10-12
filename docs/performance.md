@@ -4,7 +4,7 @@ The optimization reduces repeated formatting work. It does not establish a large
 
 ## CPU comparison
 
-Measured on an Apple M1 Pro with macOS 15.7.7 and Swift 6.2.4, using `-O -swift-version 5` for both builds. The baseline is commit `0bb7828`. Five before-and-after process pairs alternated on the same machine. Each process ran five warmed batches of 1,000 operations per path, for 25,000 operations per side. Every result contributed to a checksum. All fixture checks passed with zero errors.
+Measured on an Apple M1 Pro with macOS 15.7.7 and Swift 6.2.4, using `-O -swift-version 5` for both builds. The baseline is commit `0bb7828`; the optimized code was committed as `fe0af52`, before the clock-safety and initial-estimate changes. Five before-and-after process pairs alternated on the same machine. Each process ran five warmed batches of 1,000 operations per path, for 25,000 operations per side. Every result contributed to a checksum. All fixture checks passed with zero errors.
 
 Values are process CPU microseconds per operation. The table reports the median and the full batch range.
 
@@ -24,4 +24,4 @@ The original running app had roughly 21 MB physical footprint, with a recorded p
 
 The app now retains two logo images, two ISO date parsers, one HTTP date parser, four clock formatter configurations for one environment, and at most 16 text measurements. In-memory history retains at most 256 consecutive observations; disk checkpoints contain only the latest snapshot. A cached snapshot does not supply rates after restarting the app. Restored files larger than 256 KiB are rejected before decoding. Timer, wake, and manual requests share a 15-second minimum spacing and one in-flight request.
 
-Scheduled updates remain approximately once a minute. The app still reads fresh credentials through `/usr/bin/security` on each actual fetch. A noninteractive native Keychain experiment was denied on the existing item, so the app keeps the compatible reader instead of introducing another permission prompt. No credential cache or forecast arithmetic change is part of the optimization.
+Scheduled updates remain approximately once a minute. The app still reads fresh credentials through `/usr/bin/security` on each actual fetch. A noninteractive native Keychain experiment was denied on the existing item, so the app keeps the compatible reader instead of introducing another permission prompt. No credential cache was introduced. Later changes allow initial window-average forecasts before a recent rate is available; the benchmark's 61-sample forecast fixture exercises the established recent-rate calculation.

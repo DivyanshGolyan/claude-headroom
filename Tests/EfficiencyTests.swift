@@ -28,7 +28,7 @@ import Foundation
         history.retainRecentSuffix()
         precondition(history.samples.count == 256)
         precondition(history.samples.map(\.date) == samples.suffix(256).map(\.date), "Bounded history must be contiguous")
-        precondition(Forecast.calculate(samples: history.samples, now: now) == .estimating, "Cap must not splice across the recent counter correction")
+        precondition(Forecast.calculate(samples: history.samples, now: now) == .spare(85, reset), "Cap must discard the old rate and use the corrected window total")
         history.record(UsageSample(date: now.addingTimeInterval(1), used: 11, reset: reset))
         precondition(history.samples.count == 256 && history.samples.first!.date == samples[145].date)
         history.record(UsageSample(date: now.addingTimeInterval(7200), used: 12, reset: reset))
