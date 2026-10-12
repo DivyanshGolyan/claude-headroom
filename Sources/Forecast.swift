@@ -109,6 +109,21 @@ enum UsageError: Error {
 }
 
 enum Clock {
+    static func deadline(_ date: Date, relativeTo now: Date, seconds: Bool = false,
+        locale: Locale = .current, timeZone: TimeZone = .current) -> String {
+        var calendar = Calendar.current
+        calendar.timeZone = timeZone
+        var style = Date.FormatStyle(date: .omitted, time: seconds ? .standard : .shortened,
+            locale: locale, calendar: calendar, timeZone: timeZone)
+        if !calendar.isDate(date, inSameDayAs: now) {
+            style = style.day().month(.abbreviated)
+            if calendar.component(.year, from: date) != calendar.component(.year, from: now) {
+                style = style.year()
+            }
+        }
+        return date.formatted(style)
+    }
+
     static func displayReset(_ date: Date) -> Date {
         Date(timeIntervalSince1970: (date.timeIntervalSince1970 / 60).rounded() * 60)
     }

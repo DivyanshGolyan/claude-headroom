@@ -20,7 +20,7 @@ struct StatusPresentation {
         }
         let canForecast = hasCurrentWindow && (0...Forecast.maximumSampleAge).contains(age)
         let rateLimitDetail = problem == .rateLimited ? "Claude usage updates are rate limited." + (retryAt.map {
-            " Next automatic attempt is \($0.formatted(date: .omitted, time: .standard))."
+            " Next automatic attempt is \(Clock.deadline($0, relativeTo: now, seconds: true))."
         } ?? "") : ""
         switch problem {
         case .signedOut:
@@ -28,7 +28,7 @@ struct StatusPresentation {
             accessibilityText = "Claude is signed out. Sign into Claude Code."
             showsForecast = false
         case .rateLimited where !canForecast:
-            title = "Rate limited" + (retryAt.map { " · retry \(Clock.time($0))" } ?? "")
+            title = "Rate limited" + (retryAt.map { " · retry \(Clock.deadline($0, relativeTo: now))" } ?? "")
             accessibilityText = rateLimitDetail
             showsForecast = false
         case .unavailable where !canForecast:

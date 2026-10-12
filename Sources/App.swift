@@ -100,11 +100,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func render() {
         guard !menuIsOpen else { return }
         let instant = ContinuousClock.now
-        let now = timeline.calendarNow(at: instant)
+        let now = Date()
         let forecast = timeline.forecast(at: instant)
         let age = timeline.age(at: instant)
-        let presentation = StatusPresentation(forecast: forecast, now: now, age: age, problem: problem,
-            retryAt: refreshGate.nextAttemptDate(at: instant, wallNow: Date()))
+        let retryAt = refreshGate.nextAttemptDate(at: instant, wallNow: now)
+        let presentation = StatusPresentation(forecast: forecast, now: now, age: age, problem: problem, retryAt: retryAt)
         let title = presentation.title
         guard let button = item.button else { return }
         if button.title != title { button.title = title }
@@ -122,8 +122,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if forecast == .estimating { detail += "Needs a usable window start or live observations at least one minute apart.\n" }
         if let problemDetail {
             detail += problemDetail + "\n"
-            if let next = refreshGate.nextAttemptDate(at: instant, wallNow: Date()) {
-                detail += "Next attempt: \(next.formatted(date: .omitted, time: .shortened))\n"
+            if let retryAt {
+                detail += "Next attempt: \(Clock.deadline(retryAt, relativeTo: now, seconds: true))\n"
             }
         }
         detail += "Click for Refresh now, Launch at login, and Quit."

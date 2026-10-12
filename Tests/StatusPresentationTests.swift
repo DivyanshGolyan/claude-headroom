@@ -9,8 +9,8 @@ enum StatusPresentationTests {
             for forecast in [Forecast.onTrack, .stale, .gap(now, retry)] {
                 let status = StatusPresentation(forecast: forecast, now: now, age: age,
                     problem: .rateLimited, retryAt: retry)
-                precondition(status.title == "Rate limited · retry \(Clock.time(retry))")
-                precondition(status.accessibilityText.contains(retry.formatted(date: .omitted, time: .standard)))
+                precondition(status.title == "Rate limited · retry \(Clock.deadline(retry, relativeTo: now))")
+                precondition(status.accessibilityText.contains(Clock.deadline(retry, relativeTo: now, seconds: true)))
                 precondition(!status.showsForecast && !status.appearsDisabled)
             }
         }
@@ -23,7 +23,7 @@ enum StatusPresentationTests {
                     precondition(status.showsForecast && status.appearsDisabled == (age > 180))
                     if problem == .rateLimited {
                         precondition(status.accessibilityText.contains("rate limited"))
-                        precondition(status.accessibilityText.contains(retry.formatted(date: .omitted, time: .standard)))
+                        precondition(status.accessibilityText.contains(Clock.deadline(retry, relativeTo: now, seconds: true)))
                     }
                 }
             }
@@ -49,6 +49,25 @@ enum StatusPresentationTests {
         precondition(unavailable.title == "Usage unavailable" && !unavailable.showsForecast)
         let transient = StatusPresentation(forecast: .onTrack, now: now, age: 181, problem: .unavailable, retryAt: retry)
         precondition(transient.title == "On track" && transient.appearsDisabled)
+        let iso = ISO8601DateFormatter()
+        let reference = iso.date(from: "2026-10-12T11:55:00Z")!
+        let zone = TimeZone(secondsFromGMT: 0)!
+        let noon = iso.date(from: "2026-10-12T18:00:00Z")!
+        let tomorrow = iso.date(from: "2026-10-13T18:00:00Z")!
+        let distant = iso.date(from: "2050-10-13T18:00:00Z")!
+        let twelveHour = Locale(identifier: "en_US@hours=h12")
+        let twentyFourHour = Locale(identifier: "en_GB@hours=h23")
+        let afternoon = Clock.deadline(noon, relativeTo: reference, locale: twelveHour, timeZone: zone)
+        precondition(afternoon.contains("6:00") && afternoon.uppercased().contains("PM"))
+        for seconds in [false, true] {
+            let nextDay = Clock.deadline(tomorrow, relativeTo: reference, seconds: seconds, locale: twelveHour, timeZone: zone)
+            precondition(nextDay.contains("13") && nextDay.contains("Oct") && nextDay.uppercased().contains("PM"))
+            let nextYear = Clock.deadline(distant, relativeTo: reference, seconds: seconds, locale: twelveHour, timeZone: zone)
+            precondition(nextYear.contains("2050"))
+            let military = Clock.deadline(tomorrow, relativeTo: reference, seconds: seconds, locale: twentyFourHour, timeZone: zone)
+            precondition(military.contains("18:00") && !military.uppercased().contains("PM"))
+        }
+        print("PASS retry deadlines disambiguate noon, next-day, distant-year and 12/24-hour formats")
         print("PASS fetch failures expose their cause and scheduled retry; recovery restores the forecast")
     }
 }
