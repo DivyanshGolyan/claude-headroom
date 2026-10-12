@@ -42,7 +42,8 @@ enum ForecastTests {
         expect(forecast(20, 20) == .spare(80, reset), "idle time counts as zero consumption")
         expect(forecast(100, 100) == .out(reset), "already exhausted needs no warm-up")
         expect(forecast(20, 30, reset: now) == .awaitingReset, "expired quota is never reused")
-        expect(Forecast.calculate(samples: [sample(11, 30)], now: now) == .stale, "stale measurements are marked")
+        expect(Forecast.calculate(samples: [sample(15, 30)], now: now) != .stale, "fifteen-minute observations remain usable")
+        expect(Forecast.calculate(samples: [sample(15.0 + 1.0 / 60, 30)], now: now) == .stale, "observations older than fifteen minutes are stale")
 
         let oldReset = reset.addingTimeInterval(-5 * 3600)
         expect(Forecast.calculate(samples: [sample(30, 90, reset: oldReset), sample(0, 10)], now: now) == .spare(75, reset), "new quota window uses its own cumulative total")

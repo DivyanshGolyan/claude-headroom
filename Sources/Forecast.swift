@@ -152,6 +152,7 @@ enum Clock {
 }
 
 enum Forecast: Equatable {
+    static let maximumSampleAge: TimeInterval = 15 * 60
     case estimating, awaitingReset, stale, ready, onTrack
     case gap(Date, Date, String? = nil)
     case out(Date, String? = nil)
@@ -178,7 +179,7 @@ enum Forecast: Equatable {
 
     static func calculate(samples: [UsageSample], now: Date) -> Forecast {
         guard let latest = samples.last else { return .estimating }
-        guard (0...600).contains(now.timeIntervalSince(latest.date)) else { return .stale }
+        guard (0...maximumSampleAge).contains(now.timeIntervalSince(latest.date)) else { return .stale }
         var gaps: [(Date, Date, String?)] = []
         var sessionSpare: Double?
 

@@ -29,7 +29,7 @@ Headroom reads your existing Claude Code login from Keychain. If it says **Signe
 
 Updates arrive approximately every minute. The first live response estimates pace from usage since the quota window began. Once live observations span a minute, Headroom uses measured recent consumption and refines it as history grows. Early estimates can change substantially, especially when usage is reported in whole percentage points. Forecasts assume that pace continues; they aren't guarantees. Weekly warnings identify the relevant limit and reset day.
 
-Click or right-click for **Refresh now**, **Launch at login**, and **Quit**. Launch at login starts off. Hover for the last successful update and any error. Rate limits show **Rate limited · retry 6:55**, using the scheduled retry time. Other fetch failures dim the last forecast after three minutes and show **Usage unavailable** after ten. If a menu-bar manager hides the app, reveal it and Command-drag Headroom into the visible section.
+Click or right-click for **Refresh now**, **Launch at login**, and **Quit**. Launch at login starts off. Hover for the last successful update, any error, and the scheduled retry time. During rate limits and other temporary fetch failures, usable forecasts stay visible for up to 15 minutes and dim after three. With no usable forecast, the bar shows **Rate limited · retry 6:55** or **Usage unavailable**. If a menu-bar manager hides the app, reveal it and Command-drag Headroom into the visible section.
 
 ## Privacy and limitations
 
