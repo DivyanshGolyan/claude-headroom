@@ -77,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 switch error {
                 case UsageError.signedOut:
                     problem = .signedOut
-                    problemDetail = "Sign into Claude Code, then refresh. Headroom does not launch Claude or change credentials."
+                    problemDetail = "The Claude credential is missing or was rejected. Choose Sign in to Claude, complete sign-in, then refresh."
                     nextAttempt = ContinuousClock.now.advanced(by: .seconds(300))
                 case let UsageError.rateLimited(delay, receivedAt):
                     problem = .rateLimited
@@ -150,10 +150,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         menu.removeAllItems()
-        let detail = StatusPresentation.usageDetail(sample: timeline.history.samples.last,
+        var detail = StatusPresentation.usageDetail(sample: timeline.history.samples.last,
             now: timeline.calendarNow(at: ContinuousClock.now))
+        if problem == .signedOut { detail = "Last update · " + detail }
         menu.addItem(withTitle: detail, action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(.separator())
+        if problem == .signedOut {
+            let signIn = menu.addItem(withTitle: "Sign in to Claude…", action: #selector(signIn), keyEquivalent: "")
+            signIn.target = self
+        }
         let refreshItem = menu.addItem(withTitle: "Refresh now", action: #selector(manualRefresh), keyEquivalent: "")
         refreshItem.target = self
         refreshItem.isEnabled = refreshGate.allowsManual(at: ContinuousClock.now)
@@ -167,6 +172,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func manualRefresh() {
         fetch(manual: true)
+    }
+
+    @objc private func signIn() {
+        do {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Headroom-login-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700])
+            let script = directory.appendingPathComponent("Sign in to Claude.command")
+            let command = """
+            #!/bin/zsh -l
+            export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+            claude auth login
+            printf '\\nReturn to Headroom and choose Refresh now.\\n'
+            rm -- "$0"
+            rmdir -- "${0:h}"
+            """
+            try command.write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+            guard NSWorkspace.shared.open(script) else { throw UsageError.message("Could not open Terminal.") }
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Open Terminal and run: claude auth login"
+            alert.informativeText = "After signing in, choose Refresh now in Headroom."
+            alert.runModal()
+        }
     }
     @objc private func quit() { NSApp.terminate(nil) }
 

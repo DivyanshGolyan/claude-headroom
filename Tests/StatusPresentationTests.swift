@@ -61,7 +61,7 @@ enum StatusPresentationTests {
         let recovered = StatusPresentation(forecast: .onTrack, now: now, age: 0, problem: nil, retryAt: nil)
         precondition(recovered.title == "On track" && recovered.showsForecast)
         let signedOut = StatusPresentation(forecast: .stale, now: now, age: .infinity, problem: .signedOut, retryAt: retry)
-        precondition(signedOut.title == "Signed out" && !signedOut.showsForecast)
+        precondition(signedOut.title == "Sign-in needed" && !signedOut.showsForecast)
         let unavailable = StatusPresentation(forecast: .stale, now: now, age: .infinity, problem: .unavailable, retryAt: retry)
         precondition(unavailable.title == "Usage unavailable" && !unavailable.showsForecast)
         let transient = StatusPresentation(forecast: .onTrack, now: now, age: 181, problem: .unavailable, retryAt: retry)

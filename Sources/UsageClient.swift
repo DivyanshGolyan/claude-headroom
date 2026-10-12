@@ -28,7 +28,8 @@ actor UsageClient {
         case 200:
             return FetchedUsage(sample: try JSONDecoder().decode(UsageResponse.self, from: data).sample(at: localDate),
                 receivedAt: receivedAt, serverDate: serverDate)
-        case 401, 403: throw UsageError.signedOut
+        case 401: throw UsageError.signedOut
+        case 403: throw UsageError.message("Claude denied access to usage data (HTTP 403).")
         case 429:
             throw UsageError.rateLimited(HTTPDate.retryDelay(http.value(forHTTPHeaderField: "Retry-After"),
                 serverDate: serverDate, localDate: localDate), receivedAt: receivedAt)
@@ -51,8 +52,11 @@ actor UsageClient {
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         deadline.cancel()
-        guard process.terminationStatus == 0,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard process.terminationStatus == 0 else {
+            if process.terminationStatus == 44 { throw UsageError.signedOut }
+            throw UsageError.message("Could not read the Claude credential from Keychain. Headroom will retry.")
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let oauth = json["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String, !token.isEmpty else {
             throw UsageError.signedOut

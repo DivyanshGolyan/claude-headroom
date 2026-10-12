@@ -24,8 +24,8 @@ struct StatusPresentation {
         } ?? "") : ""
         switch problem {
         case .signedOut:
-            title = "Signed out"
-            accessibilityText = "Claude is signed out. Sign into Claude Code."
+            title = "Sign-in needed"
+            accessibilityText = "Headroom needs a valid Claude credential. Choose Sign in to Claude from the menu."
             showsForecast = false
         case .rateLimited where !canForecast:
             title = "Rate limited" + (retryAt.map { " · retry \(Clock.deadline($0, relativeTo: now))" } ?? "")
