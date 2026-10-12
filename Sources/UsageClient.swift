@@ -4,7 +4,7 @@ actor UsageClient {
     private let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 20
-        config.timeoutIntervalForResource = 25
+        config.timeoutIntervalForResource = ResponseTiming.maximumRequestDuration.timeInterval
         config.httpCookieStorage = nil
         config.urlCache = nil
         return URLSession(configuration: config)
@@ -15,8 +15,10 @@ actor UsageClient {
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        let startedAt = ContinuousClock.now
         let (data, response) = try await session.data(for: request)
         let receivedAt = ContinuousClock.now
+        try ResponseTiming.validate(startedAt: startedAt, receivedAt: receivedAt)
         let localDate = Date()
         guard let http = response as? HTTPURLResponse else {
             throw UsageError.message("Claude returned an invalid response.")

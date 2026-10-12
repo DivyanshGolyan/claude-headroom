@@ -36,6 +36,7 @@ The benchmark reports five batches of 1,000 operations for forecast calculation,
 | `Sources/RefreshGate.swift` | Shared request spacing, single-flight state, and retry deadlines. |
 | `Sources/RuntimeTimeline.swift` | Continuous observation timing, server calendar anchor, freshness, and stale restored snapshots. |
 | `Sources/HTTPDate.swift` | HTTP date parsing and conversion of Retry-After to elapsed duration. |
+| `Sources/ResponseTiming.swift` | Shared request budget and rejection of responses delayed by suspension. |
 | `Sources/HistoryStore.swift` | Bounded cache reads and private atomic checkpoints. |
 
 Keep elapsed deadlines typed as `ContinuousClock.Instant` and delays as `Duration`. Use `Date` for server quota timestamps, calendar anchoring, and display. `RuntimeTimeline` owns the bridge between these clocks. This separation follows [SwiftNIO's deadline design](https://github.com/apple/swift-nio/blob/main/Sources/NIOCore/EventLoop.swift); deterministic clock advances follow the testing approach in [Point-Free Clocks](https://github.com/pointfreeco/swift-clocks). Headroom depends on neither library.
