@@ -86,27 +86,67 @@ struct UsageResponse: Decodable {
 
     private static func valid(_ used: Double) -> Bool { used.isFinite && (0...100).contains(used) }
 
-    static func parseDate(_ text: String) -> Date? {
+    private static let dateLock = NSLock()
+    private static let fractionalDate: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: text) { return date }
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: text)
+        return formatter
+    }()
+    private static let wholeDate = ISO8601DateFormatter()
+
+    static func parseDate(_ text: String) -> Date? {
+        dateLock.lock()
+        defer { dateLock.unlock() }
+        return fractionalDate.date(from: text) ?? wholeDate.date(from: text)
     }
+
 }
 
 enum UsageError: Error {
     case message(String)
     case signedOut
-    case rateLimited(Date)
+    case rateLimited(Duration, receivedAt: ContinuousClock.Instant)
 }
 
 enum Clock {
+    static func displayReset(_ date: Date) -> Date {
+        Date(timeIntervalSince1970: (date.timeIntervalSince1970 / 60).rounded() * 60)
+    }
+
+    static func resolvedFormat(day: Bool, locale: Locale = .current) -> String {
+        DateFormatter.dateFormat(fromTemplate: day ? "EEEjmm" : "jmm", options: 0, locale: locale) ?? "HH:mm"
+    }
+
+    private static let lock = NSLock()
+    private static var environment: (Locale, TimeZone)?
+    private static var formatters: [Int: (format: String, formatter: DateFormatter)] = [:]
+
+    static func invalidate() {
+        lock.lock()
+        defer { lock.unlock() }
+        environment = nil
+        formatters.removeAll()
+    }
+
     static func time(_ date: Date, day: Bool = false, period: Bool = false, locale: Locale = .current) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        let format = DateFormatter.dateFormat(fromTemplate: day ? "EEEjmm" : "jmm", options: 0, locale: locale) ?? "HH:mm"
-        formatter.dateFormat = period ? format : format.replacingOccurrences(of: "\\s*[abB]\\s*", with: "", options: .regularExpression)
+        lock.lock()
+        defer { lock.unlock() }
+        let zone = NSTimeZone.default
+        if environment?.0 != locale || environment?.1 != zone {
+            environment = (locale, zone)
+            formatters.removeAll()
+        }
+        let key = (day ? 2 : 0) + (period ? 1 : 0)
+        let format = resolvedFormat(day: day, locale: locale)
+        let formatter: DateFormatter
+        if let cached = formatters[key], cached.format == format { formatter = cached.formatter }
+        else {
+            formatter = DateFormatter()
+            formatter.locale = locale
+            formatter.timeZone = zone
+            formatter.dateFormat = period ? format : format.replacingOccurrences(of: "\\s*[abB]\\s*", with: "", options: .regularExpression)
+            formatters[key] = (format, formatter)
+        }
         return formatter.string(from: date).trimmingCharacters(in: .whitespaces)
     }
 }
@@ -117,9 +157,11 @@ enum Forecast: Equatable {
     case out(Date, String? = nil)
     case spare(Int, Date)
 
+    private static let minimumObservationSpan: TimeInterval = 60
+
     static func rate(_ observations: [(Date, Double)], minutes: Double) -> Double? {
         guard let first = observations.first, let latest = observations.last,
-              latest.0.timeIntervalSince(first.0) >= 300 else { return nil }
+              latest.0.timeIntervalSince(first.0) >= minimumObservationSpan else { return nil }
         let cutoff = latest.0.addingTimeInterval(-minutes * 60)
         var baseline = first
         for (left, right) in zip(observations, observations.dropFirst()) where left.0 <= cutoff {
@@ -130,7 +172,7 @@ enum Forecast: Equatable {
             }
         }
         let elapsed = latest.0.timeIntervalSince(baseline.0)
-        guard elapsed >= 300 else { return nil }
+        guard elapsed >= minimumObservationSpan else { return nil }
         return max(0, latest.1 - baseline.1) / elapsed
     }
 
@@ -140,12 +182,14 @@ enum Forecast: Equatable {
         var gaps: [(Date, Date, String?)] = []
         var sessionSpare: Double?
 
-        func evaluate(used: Double, reset: Date, name: String?, observations: [(Date, Double)]) {
+        func evaluate(used: Double, reset: Date, duration: TimeInterval, name: String?, observations: [(Date, Double)]) {
             guard reset > now else { return }
             if used >= 100 { gaps.append((now, reset, name)); return }
             let horizon = reset.timeIntervalSince(latest.date)
             let longMinutes = min(60, max(15, horizon / 60))
-            guard let long = rate(observations, minutes: longMinutes) else { return }
+            let elapsed = duration - horizon
+            let initialRate: Double? = elapsed.isFinite && elapsed >= minimumObservationSpan && elapsed <= duration ? used / elapsed : nil
+            guard let long = rate(observations, minutes: longMinutes) ?? initialRate else { return }
             let short = rate(observations, minutes: 10) ?? long
             // Any shortfall counts. Use the faster pace for both warnings and spare.
             let burn = max(short, long)
@@ -164,7 +208,7 @@ enum Forecast: Equatable {
                 if let newer = current.last, sample.used > newer.1 { break }
                 current.append((sample.date, sample.used))
             }
-            evaluate(used: latest.used, reset: reset, name: nil, observations: current.reversed())
+            evaluate(used: latest.used, reset: reset, duration: 5 * 3600, name: nil, observations: current.reversed())
         }
         for window in latest.weekly ?? [] {
             var observations: [(Date, Double)] = []
@@ -174,7 +218,7 @@ enum Forecast: Equatable {
                 if let newer = observations.last, previous.used > newer.1 { break }
                 observations.append((sample.date, previous.used))
             }
-            evaluate(used: window.used, reset: window.reset, name: window.name, observations: observations.reversed())
+            evaluate(used: window.used, reset: window.reset, duration: 7 * 86400, name: window.name, observations: observations.reversed())
         }
         if var gap = gaps.sorted(by: { $0.0 < $1.0 }).first {
             for other in gaps.sorted(by: { $0.0 < $1.0 }) where other.0 <= gap.1 {
@@ -200,11 +244,13 @@ enum Forecast: Equatable {
         case .stale: return "No data"
         case .ready: return "Ready"
         case .onTrack: return "On track"
-        case let .spare(percent, reset): return "\(percent)% spare till \(Clock.time(reset, locale: locale))"
+        case let .spare(percent, reset): return "\(percent)% spare till \(Clock.time(Clock.displayReset(reset), locale: locale))"
         case let .out(reset, name):
+            let reset = Clock.displayReset(reset)
             let day = name != nil && !Calendar.current.isDate(reset, inSameDayAs: now)
             return "\(name.map { $0 + " out" } ?? "Out") till \(Clock.time(reset, day: day, period: name != nil, locale: locale))"
         case let .gap(start, reset, name):
+            let reset = Clock.displayReset(reset)
             let rounded = Date(timeIntervalSince1970: floor(start.timeIntervalSince1970 / 300) * 300)
             let day = name != nil && !Calendar.current.isDate(reset, inSameDayAs: now)
             let startDay = name != nil && !Calendar.current.isDate(rounded, inSameDayAs: now)
@@ -214,9 +260,9 @@ enum Forecast: Equatable {
 
     var accessibilityText: String {
         switch self {
-        case let .gap(start, reset, name): return "\(name ?? "Claude") quota is predicted to run out at \(start.formatted()). Resets at \(reset.formatted())."
-        case let .out(reset, name): return "\(name ?? "Claude") quota is out until \(reset.formatted())."
-        case let .spare(percent, reset): return "An estimated \(percent) percent of Claude quota will remain unused at reset, \(reset.formatted())."
+        case let .gap(start, reset, name): return "\(name ?? "Claude") quota is predicted to run out at \(start.formatted()). Resets at \(Clock.displayReset(reset).formatted())."
+        case let .out(reset, name): return "\(name ?? "Claude") quota is out until \(Clock.displayReset(reset).formatted())."
+        case let .spare(percent, reset): return "An estimated \(percent) percent of Claude quota will remain unused at reset, \(Clock.displayReset(reset).formatted())."
         default: return "Claude usage forecast: \(title())."
         }
     }
@@ -228,8 +274,14 @@ struct History: Codable {
     mutating func record(_ sample: UsageSample) {
         if let last = samples.last, sample.date <= last.date { samples.removeAll() }
         samples.append(sample)
-        // Retain one hour and an anchor. Cumulative usage survives missed samples.
-        let cutoff = sample.date.addingTimeInterval(-3600)
-        while samples.count > 2 && samples[1].date < cutoff { samples.removeFirst() }
+        retainRecentSuffix()
+    }
+
+    mutating func retainRecentSuffix() {
+        guard let latest = samples.last else { return }
+        let cutoff = latest.date.addingTimeInterval(-3600)
+        var first = max(0, samples.count - 256)
+        while first + 2 < samples.count && samples[first + 1].date < cutoff { first += 1 }
+        if first > 0 { samples.removeFirst(first) }
     }
 }

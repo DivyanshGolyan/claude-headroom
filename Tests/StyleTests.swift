@@ -2,6 +2,27 @@ import AppKit
 
 @main enum StyleTests {
     static func main() {
+        let plain = claudeMenuBarImage()!
+        let warning = claudeMenuBarImage(warning: true)!
+        precondition(plain === claudeMenuBarImage() && warning === claudeMenuBarImage(warning: true))
+        precondition(plain !== warning && plain.isTemplate && warning.isTemplate)
+        precondition(plain.size == NSSize(width: 22, height: 18) && warning.size == NSSize(width: 38, height: 18))
+        func bitmap(_ image: NSImage) -> NSBitmapImageRep {
+            let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(image.size.width), pixelsHigh: 18, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+            image.draw(in: NSRect(origin: .zero, size: image.size))
+            NSGraphicsContext.restoreGraphicsState()
+            return bitmap
+        }
+        for image in [plain, warning] {
+            let pixels = bitmap(image)
+            precondition((0..<18).contains { x in (0..<18).contains { y in pixels.colorAt(x: x, y: y)!.alphaComponent > 0 } }, "Claude logo must draw")
+            precondition((18..<22).allSatisfy { x in (0..<18).allSatisfy { y in pixels.colorAt(x: x, y: y)!.alphaComponent == 0 } }, "Keep four transparent points after Claude logo")
+        }
+        let warningPixels = bitmap(warning)
+        precondition((22..<34).contains { x in (0..<18).contains { y in warningPixels.colorAt(x: x, y: y)!.alphaComponent > 0 } }, "Warning symbol must draw")
+        print("PASS cached template logos draw at original sizes with four-point spacing")
         let now = Date()
         var spareWidths = Set<Int>()
         var gapWidths = Set<Int>()

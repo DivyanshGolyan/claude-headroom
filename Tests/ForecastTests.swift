@@ -17,7 +17,19 @@ enum ForecastTests {
         }
 
         expect(Forecast.calculate(samples: [], now: now) == .estimating, "no history does not invent a rate")
-        expect(forecast(20, 21, minutes: 4) == .estimating, "five-minute warm-up")
+        expect(Forecast.calculate(samples: [sample(0, 20)], now: now) == .spare(50, reset), "one observation estimates the window-average pace")
+        expect(forecast(20, 21, minutes: 59.0 / 60) == .spare(45, reset), "sub-minute observations retain the window-average estimate")
+        let quarterReset = now.addingTimeInterval(3.75 * 3600)
+        expect(Forecast.calculate(samples: [sample(0, 90, reset: quarterReset)], now: now) == .gap(now.addingTimeInterval(500), quarterReset), "90 percent used in a quarter window predicts eight minutes twenty seconds left")
+        expect(Forecast.calculate(samples: [sample(0, 25, reset: quarterReset)], now: now) == .onTrack, "one observation at the window pace is on track")
+        expect(Forecast.calculate(samples: [sample(0, 0)], now: now) == .spare(100, reset), "zero observed usage gives an initial spare estimate")
+        for horizon: TimeInterval in [17941, 18000, 18060] {
+            expect(Forecast.calculate(samples: [sample(0, 20, reset: now.addingTimeInterval(horizon))], now: now) == .estimating, "unusable inferred window start remains measuring")
+        }
+        expect(forecast(20, 21, minutes: 1) == .gap(now.addingTimeInterval(4740), reset), "first minute produces an exhaustion estimate")
+        expect(forecast(20, 20, minutes: 1) == .spare(80, reset), "first idle minute produces a spare estimate")
+        let refined = [sample(2, 20), sample(1, 21), sample(0, 21)]
+        expect(Forecast.calculate(samples: refined, now: now) == .gap(now.addingTimeInterval(9480), reset), "next observation refines the initial pace")
         expect(forecast(35, 40) == .spare(30, reset), "projects spare from measured consumption")
         expect(forecast(45, 50) == .spare(20, reset), "20 percent spare")
         expect(forecast(55, 60) == .spare(10, reset), "10 percent is spare")
@@ -33,7 +45,7 @@ enum ForecastTests {
         expect(Forecast.calculate(samples: [sample(11, 30)], now: now) == .stale, "stale measurements are marked")
 
         let oldReset = reset.addingTimeInterval(-5 * 3600)
-        expect(Forecast.calculate(samples: [sample(30, 90, reset: oldReset), sample(0, 10)], now: now) == .estimating, "separate quota windows")
+        expect(Forecast.calculate(samples: [sample(30, 90, reset: oldReset), sample(0, 10)], now: now) == .spare(75, reset), "new quota window uses its own cumulative total")
         let recent = [sample(40, 0), sample(20, 20), sample(0, 20)]
         // Baseline at -30m is 10%, so the last 30m rate is 10% / 30m.
         expect(abs(Forecast.rate(recent.map { ($0.date, $0.used) }, minutes: 30)! - 10.0 / 1800) < 0.000001, "interpolates a lookback cutoff")
@@ -61,6 +73,19 @@ enum ForecastTests {
         expect(Forecast.spare(18, gapEnd).title(now: gapStart, locale: Locale(identifier: "en_US")) == "18% spare till 7:20", "agreed spare label")
         expect(Forecast.onTrack.title() == "On track", "agreed on-track label")
 
+        for (offset, minute) in [(-0.477, "7:20"), (0.0, "7:20"), (0.383, "7:20"), (30.0, "7:21")] {
+            let jittered = gapEnd.addingTimeInterval(offset)
+            expect(Forecast.gap(gapStart, jittered).title(now: gapStart, locale: Locale(identifier: "en_US")) == "Out 6:35–\(minute)", "reset display rounds to the nearest minute")
+            expect(Forecast.out(jittered).title(now: gapStart, locale: Locale(identifier: "en_US")) == "Out till \(minute)", "current outage reset display rounds to nearest minute")
+            expect(Forecast.spare(20, jittered).title(now: gapStart, locale: Locale(identifier: "en_US")) == "20% spare till \(minute)", "spare reset display rounds to nearest minute")
+            let precise = Forecast.calculate(samples: [UsageSample(date: gapStart, used: 100, reset: jittered)], now: gapStart)
+            expect(precise == .out(jittered), "display rounding preserves precise forecast reset")
+        }
+
+        let midnightReset = UsageResponse.parseDate("2026-10-12T18:29:59.523Z")!
+        let midnightLabel = Forecast.out(midnightReset, "Weekly").title(now: gapStart, locale: Locale(identifier: "en_US"))
+        expect(midnightLabel.contains("Tue") && midnightLabel.contains("12:00"), "weekly reset rounding includes the next weekday at midnight")
+
         let json = Data("{\"five_hour\":{\"utilization\":37,\"resets_at\":\"2026-10-12T13:49:59.537793+00:00\"},\"limits\":[]}".utf8)
         expect(try JSONDecoder().decode(UsageResponse.self, from: json).sample(at: now).used == 37, "actual endpoint schema with fractional reset timestamp")
         expect(UsageResponse.parseDate("2026-10-12T13:49:59Z") != nil, "non-fractional reset timestamp")
@@ -75,16 +100,19 @@ enum ForecastTests {
         expect(forecast(50, 55) == .spare(15, reset), "spare rounds down in five-percent steps")
         expect(forecast(56, 61) == .onTrack, "spare below ten never remains latched")
         expect(forecast(70, 71, minutes: 40, reset: now.addingTimeInterval(900)) == .spare(25, now.addingTimeInterval(900)), "short horizon uses the minimum fifteen-minute baseline")
-        let correction = [sample(30, 90), sample(1, 10), sample(0, 11)]
-        expect(Forecast.calculate(samples: correction, now: now) == .estimating, "counter correction requires fresh observations")
+        let correction = [sample(30, 90), sample(0.5, 10), sample(0, 11)]
+        expect(Forecast.calculate(samples: correction, now: now) == .spare(70, reset), "counter correction discards old rates and uses corrected cumulative total")
         expect(Forecast.calculate(samples: [sample(10, 10), sample(0, 12)], now: now) != .estimating, "missed observations preserve measured usage")
         let oldWindow = [sample(10, 80, reset: oldReset), sample(0, 5)]
-        expect(Forecast.calculate(samples: oldWindow, now: now) == .estimating, "session reset never borrows the previous window rate")
+        expect(Forecast.calculate(samples: oldWindow, now: now) == .spare(85, reset), "session reset never borrows the previous window rate")
         expect(Forecast.gap(gapStart.addingTimeInterval(120), gapEnd).title(now: gapStart, locale: Locale(identifier: "en_US")) == "Out 6:35–7:20", "run-out time rounds down to five minutes")
         expect(Forecast.out(gapEnd).title(now: gapStart, locale: Locale(identifier: "en_US")) == "Out till 7:20", "current exhaustion differs from future exhaustion")
         expect(Forecast.gap(gapStart, gapEnd).title(now: gapStart, locale: Locale(identifier: "en_GB")) == "Out 18:35–19:20", "24-hour locale is preserved")
         expect(Forecast.gap(gapStart, gapEnd).accessibilityText.contains("predicted"), "VoiceOver receives a full forecast sentence")
         let weekReset = now.addingTimeInterval(2 * 86400)
+        let initialWeekReset = now.addingTimeInterval(5.25 * 86400)
+        let initialWeek = QuotaWindow(id: "weekly", used: 90, reset: initialWeekReset, name: "Weekly")
+        expect(Forecast.calculate(samples: [UsageSample(date: now, used: 0, reset: nil, weekly: [initialWeek])], now: now) == .gap(now.addingTimeInterval(16800), initialWeekReset, "Weekly"), "one weekly observation estimates its seven-day average")
         let week = QuotaWindow(id: "weekly", used: 100, reset: weekReset, name: "Weekly")
         expect(Forecast.calculate(samples: [UsageSample(date: now, used: 5, reset: reset, weekly: [week])], now: now) == .out(weekReset, "Weekly"), "exhausted weekly quota overrides session warm-up")
         let weekBefore = QuotaWindow(id: "weekly", used: 80, reset: weekReset, name: "Weekly")
