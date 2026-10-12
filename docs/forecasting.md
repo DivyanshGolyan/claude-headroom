@@ -19,7 +19,7 @@ spare = remaining − rate × time from latest observation to reset
 
 Any predicted shortfall immediately produces an outage warning. There is no product tolerance or delayed warning. Projected spare of at least 10% produces a spare label; anything from 0% to under 10% is On track. Floating-point roundoff is removed at one-billionth of a percentage point so exact boundaries stay exact.
 
-Estimated exhaustion times round down to five minutes. Spare rounds down to five percentage points. Reset times retain their reported minute. Five-hour labels use the system's 12/24-hour convention with the meridiem removed. Weekly labels retain it in 12-hour locales and include the weekday when needed.
+Estimated exhaustion times round down to five minutes. Spare rounds down to five percentage points. Displayed reset times round to the nearest minute so sub-second server jitter across a minute boundary does not flicker. Calculations retain the precise reset timestamp. Five-hour labels use the system's 12/24-hour convention with the meridiem removed. Weekly labels retain it in 12-hour locales and include the weekday when needed.
 
 ## Continuity and coverage
 
@@ -31,8 +31,8 @@ A null five-hour window, or zero utilization with no reset time, is treated as R
 
 ## Freshness and storage
 
-Requests time out after 25 seconds overall. Failures back off from one minute to 15 minutes. HTTP 429 also respects Retry-After. Manual refresh respects the same server rate-limit cooldown. Signing out is shown immediately. Other failures retain the previous forecast, dim it after three minutes, and show No data after ten. A separate UI check each minute updates freshness during backoff.
+Requests time out after 25 seconds overall. Failures back off from one minute to 15 minutes. HTTP 429 also respects Retry-After. Timer, wake, and manual requests share a 15-second minimum interval and never overlap. Manual refresh respects the same server rate-limit cooldown. Signing out is shown immediately. Other failures retain the previous forecast, dim it after three minutes, and show No data after ten. A separate UI check each minute updates freshness during backoff.
 
-Only percentages, quota identifiers, observation dates, and reset dates are saved in `~/Library/Application Support/Headroom/history.json`, with owner-only file permissions. History retains about one hour and an earlier anchor. Credentials stay in Keychain and transient process memory. Headroom does not start Claude, alter credentials, or refresh tokens. There is no analytics service.
+Only percentages, quota identifiers, observation dates, and reset dates are saved in `~/Library/Application Support/Headroom/history.json`, with owner-only file permissions. History retains about one hour and an earlier anchor, capped at the latest 256 consecutive observations. Restored cache files larger than 256 KiB are ignored. If either bound removes older evidence, forecasting uses the available recent observations and may need to warm up again. Credentials stay in Keychain and transient process memory. Headroom does not start Claude, alter credentials, or refresh tokens. There is no analytics service.
 
 The endpoint is internal. Response precision, quota behavior, and schema may change. Forecasts describe continued recent consumption, not future work schedules, exact token counts, or guaranteed access.

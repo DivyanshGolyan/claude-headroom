@@ -7,21 +7,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var timer: Timer?
     private let client = UsageClient()
     private var history = History()
-    private var busy = false
+    private var refreshGate = RefreshGate()
     private var failures = 0
-    private var nextAttempt = Date.distantPast
-    private var rateLimitUntil = Date.distantPast
     private var problem: String?
     private var problemDetail: String?
-    private let historyURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Headroom/history.json")
+    private let historyStore = HistoryStore(url: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Headroom/history.json"))
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if let data = try? Data(contentsOf: historyURL), let saved = try? JSONDecoder().decode(History.self, from: data) {
-            history = saved
-        }
+        if let saved = historyStore.load() { history = saved }
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.autosaveName = "Headroom"
+        item.button?.alignment = .left
         item.button?.font = StatusStyle.font
         item.button?.image = claudeMenuBarImage()
         item.button?.imagePosition = .imageLeading
@@ -37,23 +34,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         timer?.tolerance = 2
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(woke), name: NSWorkspace.didWakeNotification, object: nil)
+        for name in [NSLocale.currentLocaleDidChangeNotification, NSNotification.Name.NSSystemTimeZoneDidChange] {
+            NotificationCenter.default.addObserver(self, selector: #selector(clockChanged), name: name, object: nil)
+        }
+        DistributedNotificationCenter.default().addObserver(self, selector: #selector(clockChanged), name: NSNotification.Name("AppleTimePreferencesChangedNotification"), object: nil)
         refresh()
+    }
+
+    @objc private func clockChanged() {
+        Clock.invalidate()
+        StatusStyle.invalidate()
+        render()
     }
 
     @objc private func woke() { refresh() }
 
-    @objc private func refresh() {
+    @objc private func refresh() { fetch(manual: false) }
+
+    private func fetch(manual: Bool) {
         render()
-        guard !busy else { return }
-        guard Date() >= nextAttempt else { return }
-        busy = true
+        guard refreshGate.begin(at: Date(), manual: manual) else { return }
         Task {
+            var nextAttempt = Date.distantPast
+            var rateLimitUntil = Date.distantPast
             do {
                 let sample = try await client.fetch()
                 history.record(sample)
                 failures = 0
                 nextAttempt = .distantPast
-                rateLimitUntil = .distantPast
                 problem = nil
                 problemDetail = nil
                 saveHistory()
@@ -78,43 +86,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     } ?? "Could not fetch Claude usage. Headroom will retry automatically."
                 }
             }
-            busy = false
+            refreshGate.finish(nextAttempt: nextAttempt, rateLimitUntil: rateLimitUntil)
             render()
         }
     }
 
     private func render() {
-        let forecast = Forecast.calculate(samples: history.samples, now: Date())
-        let age = history.samples.last.map { Date().timeIntervalSince($0.date) } ?? .infinity
+        let now = Date()
+        let forecast = Forecast.calculate(samples: history.samples, now: now)
+        let age = history.samples.last.map { now.timeIntervalSince($0.date) } ?? .infinity
         let signedOut = problem == "Signed out"
-        let title = signedOut ? "Signed out" : age > 600 && problem != nil ? "No data" : forecast.title()
-        item.button?.title = title
-        item.button?.alignment = .left
-        item.button?.appearsDisabled = !signedOut && age > 180 && age <= 600
-        item.button?.image = claudeMenuBarImage(warning: !signedOut && forecast.isGap)
-        item.length = StatusStyle.width(forecast: signedOut ? .stale : forecast, title: title)
+        let title = signedOut ? "Signed out" : age > 600 && problem != nil ? "No data" : forecast.title(now: now)
+        guard let button = item.button else { return }
+        if button.title != title { button.title = title }
+        let disabled = !signedOut && age > 180 && age <= 600
+        if button.appearsDisabled != disabled { button.appearsDisabled = disabled }
+        let image = claudeMenuBarImage(warning: !signedOut && forecast.isGap)
+        if button.image !== image { button.image = image }
+        let width = StatusStyle.width(forecast: signedOut ? .stale : forecast, title: title)
+        if item.length != width { item.length = width }
         var detail = "Headroom · Claude quota\nForecast uses the faster of the last 10 minutes and a 15–60 minute baseline, including idle time. Assumes this pace continues.\n"
         if let last = history.samples.last {
             detail += "Last updated: \(last.date.formatted(date: .omitted, time: .standard))\n"
-            if let reset = last.reset { detail += "Reset: \(reset.formatted(date: .abbreviated, time: .shortened))\n" }
+            if let reset = last.reset { detail += "Reset: \(Clock.displayReset(reset).formatted(date: .abbreviated, time: .shortened))\n" }
         }
         if forecast == .estimating { detail += "Needs five minutes of observations in this quota window.\n" }
-        if let problemDetail { detail += problemDetail + "\nNext attempt: \(nextAttempt.formatted(date: .omitted, time: .shortened))\n" }
+        if let problemDetail { detail += problemDetail + "\nNext attempt: \(refreshGate.nextAttempt.formatted(date: .omitted, time: .shortened))\n" }
         detail += "Click for Refresh now, Launch at login, and Quit."
-        item.button?.toolTip = detail
-        item.button?.setAccessibilityLabel(signedOut ? "Claude is signed out. Sign into Claude Code." : title == "No data" ? "Claude usage data is unavailable." : forecast.accessibilityText)
-        item.button?.setAccessibilityValue(age > 180 ? "Last successful update was more than three minutes ago." : "")
+        if button.toolTip != detail { button.toolTip = detail }
+        let label = signedOut ? "Claude is signed out. Sign into Claude Code." : title == "No data" ? "Claude usage data is unavailable." : forecast.accessibilityText
+        if button.accessibilityLabel() != label { button.setAccessibilityLabel(label) }
+        let value = age > 180 ? "Last successful update was more than three minutes ago." : ""
+        if button.accessibilityValue() as? String != value { button.setAccessibilityValue(value) }
     }
 
     private func saveHistory() {
-        do {
-            try FileManager.default.createDirectory(at: historyURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let data = try JSONEncoder().encode(history)
-            try data.write(to: historyURL, options: [.atomic])
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: historyURL.path)
-        } catch {
-            // Forecasting continues in memory if the local cache cannot be written.
-        }
+        try? historyStore.save(history)
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -122,13 +129,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
         let detail: String
         if let last = history.samples.last, let reset = last.reset {
-            detail = "\(Int(last.used))% used · resets \(Clock.time(reset))"
+            detail = "\(Int(last.used))% used · resets \(Clock.time(Clock.displayReset(reset)))"
         } else { detail = history.samples.isEmpty ? "Waiting for usage data" : "No active five-hour window" }
         menu.addItem(withTitle: detail, action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(.separator())
         let refreshItem = menu.addItem(withTitle: "Refresh now", action: #selector(manualRefresh), keyEquivalent: "")
         refreshItem.target = self
-        refreshItem.isEnabled = !busy && Date() >= rateLimitUntil
+        refreshItem.isEnabled = refreshGate.allowsManual(at: Date())
         let login = menu.addItem(withTitle: "Launch at login", action: #selector(toggleLogin), keyEquivalent: "")
         login.target = self
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -138,9 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func manualRefresh() {
-        guard !busy, Date() >= rateLimitUntil else { return }
-        nextAttempt = .distantPast
-        refresh()
+        fetch(manual: true)
     }
     @objc private func quit() { NSApp.terminate(nil) }
 

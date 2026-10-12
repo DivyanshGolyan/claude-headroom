@@ -61,6 +61,19 @@ enum ForecastTests {
         expect(Forecast.spare(18, gapEnd).title(now: gapStart, locale: Locale(identifier: "en_US")) == "18% spare till 7:20", "agreed spare label")
         expect(Forecast.onTrack.title() == "On track", "agreed on-track label")
 
+        for (offset, minute) in [(-0.477, "7:20"), (0.0, "7:20"), (0.383, "7:20"), (30.0, "7:21")] {
+            let jittered = gapEnd.addingTimeInterval(offset)
+            expect(Forecast.gap(gapStart, jittered).title(now: gapStart, locale: Locale(identifier: "en_US")) == "Out 6:35–\(minute)", "reset display rounds to the nearest minute")
+            expect(Forecast.out(jittered).title(now: gapStart, locale: Locale(identifier: "en_US")) == "Out till \(minute)", "current outage reset display rounds to nearest minute")
+            expect(Forecast.spare(20, jittered).title(now: gapStart, locale: Locale(identifier: "en_US")) == "20% spare till \(minute)", "spare reset display rounds to nearest minute")
+            let precise = Forecast.calculate(samples: [UsageSample(date: gapStart, used: 100, reset: jittered)], now: gapStart)
+            expect(precise == .out(jittered), "display rounding preserves precise forecast reset")
+        }
+
+        let midnightReset = UsageResponse.parseDate("2026-10-12T18:29:59.523Z")!
+        let midnightLabel = Forecast.out(midnightReset, "Weekly").title(now: gapStart, locale: Locale(identifier: "en_US"))
+        expect(midnightLabel.contains("Tue") && midnightLabel.contains("12:00"), "weekly reset rounding includes the next weekday at midnight")
+
         let json = Data("{\"five_hour\":{\"utilization\":37,\"resets_at\":\"2026-10-12T13:49:59.537793+00:00\"},\"limits\":[]}".utf8)
         expect(try JSONDecoder().decode(UsageResponse.self, from: json).sample(at: now).used == 37, "actual endpoint schema with fractional reset timestamp")
         expect(UsageResponse.parseDate("2026-10-12T13:49:59Z") != nil, "non-fractional reset timestamp")

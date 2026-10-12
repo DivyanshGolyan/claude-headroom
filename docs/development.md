@@ -16,6 +16,14 @@ open build/Headroom.app
 
 `test.sh` checks forecast boundaries, burst detection, resets, counter corrections, missed observations, overlapping weekly outages, response decoding, clock formatting, VoiceOver wording, tabular digits, and stable widths across times and weekdays. Tests use synthetic quota data and do not access Keychain or the network. CI runs on Apple Silicon and Intel macOS 15 runners. Other supported macOS versions have not been exercised in CI.
 
+## Measure CPU work
+
+```sh
+bash benchmark.sh
+```
+
+The benchmark reports five batches of 1,000 operations for forecast calculation, gap-label layout, and response decoding. It uses synthetic data, consumes every result, and checks failures. Values are process CPU microseconds per operation after warm-up. It does not call Keychain or the network, measure app launch, or measure physical memory. Compare the same optimized builds on the same machine and alternate before and after runs. See [the efficiency measurements](performance.md) for the current comparison and its limits.
+
 ## Change the app
 
 | File | Responsibility |
@@ -24,7 +32,9 @@ open build/Headroom.app
 | `Sources/UsageClient.swift` | Keychain credential reads and usage requests. |
 | `Sources/App.swift` | App lifecycle, polling, freshness, menu, login item, and persistence. |
 | `Sources/StatusStyle.swift` | Native typography and fixed widths per state. |
-| `Sources/ClaudeMark.swift` | Template logo and outage warning icon. |
+| `Sources/ClaudeMark.swift` | Cached template logo and outage warning icon. |
+| `Sources/RefreshGate.swift` | Shared request spacing, single-flight state, and retry deadlines. |
+| `Sources/HistoryStore.swift` | Bounded cache reads and private atomic checkpoints. |
 
 When changing quota rules, preserve immediate outage warnings and the 10% spare cutoff unless the intended behavior changes explicitly. Update the forecast reference and tests with the implementation. For UI changes, verify both appearance modes, narrow menu bars, and the existing four-point gap after the Claude logo. The states image in the README illustrates the native font and icons; it is not a screenshot of a live account.
 
