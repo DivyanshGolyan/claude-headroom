@@ -49,5 +49,39 @@ struct RuntimeTimeline {
         return Forecast.calculate(samples: history.samples, now: calendarNow(at: now))
     }
 
+    struct Display {
+        let forecast: Forecast
+        let nextUpdate: ContinuousClock.Instant?
+    }
+
+    func display(at instant: ContinuousClock.Instant, wallNow: Date,
+        calendar: Calendar = .current) -> Display {
+        var nextUpdate: ContinuousClock.Instant?
+        func consider(_ delay: TimeInterval) {
+            guard delay > 0 else { return }
+            let deadline = instant.advanced(by: .seconds(delay))
+            nextUpdate = nextUpdate.map { min($0, deadline) } ?? deadline
+        }
+        func midnight(after date: Date) {
+            if let end = calendar.dateInterval(of: .day, for: date)?.end {
+                consider(end.timeIntervalSince(date))
+            }
+        }
+        midnight(after: wallNow)
+        guard lastReceipt != nil else {
+            return Display(forecast: history.samples.isEmpty ? .estimating : .stale, nextUpdate: nextUpdate)
+        }
+        let now = calendarNow(at: instant)
+        let projection = Forecast.project(samples: history.samples, now: now)
+        if let change = projection.nextChange { consider(change.timeIntervalSince(now)) }
+        if age(at: instant) <= StatusPresentation.dimAfter {
+            consider(StatusPresentation.dimAfter + Forecast.boundaryAllowance - age(at: instant))
+        }
+        // The tooltip changes at session reset even after the forecast becomes stale.
+        if let reset = history.samples.last?.reset { consider(reset.timeIntervalSince(now)) }
+        midnight(after: now)
+        return Display(forecast: projection.forecast, nextUpdate: nextUpdate)
+    }
+
     var snapshot: History { History(samples: Array(history.samples.suffix(1))) }
 }

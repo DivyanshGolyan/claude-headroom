@@ -35,6 +35,8 @@ bash benchmark.sh
 
 The benchmark reports five batches of 1,000 operations for forecast calculation, gap-label layout, and response decoding. It uses synthetic data, consumes every result, and checks failures. Values are process CPU microseconds per operation after warm-up. It does not call Keychain or the network, measure app launch, or measure physical memory. Compare the same optimized builds on the same machine and alternate before and after runs. See [the efficiency measurements](performance.md) for the current comparison and its limits.
 
+To measure CPU, physical memory, and kernel wakeup counters for an already running app, use `scripts/measure-app.py`. See [whole-app measurement instructions](performance.md#repeatable-whole-app-measurements) for options and comparison limits. `test.sh` checks the counter calculations and display scheduling, including exhaustion, resets, freshness, clock jumps, and daylight-saving boundaries.
+
 ## Change the app
 
 | File | Responsibility |

@@ -6,7 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var item: NSStatusItem!
     private let menu = NSMenu()
     private var menuIsOpen = false
-    private var timer: Timer?
+    private var displayTimer: Timer?
     private let client = UsageClient()
     private var timeline = RuntimeTimeline()
     private var refreshGate = RefreshGate()
@@ -39,12 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         item.button?.setAccessibilityLabel("Claude usage forecast")
         render()
-        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.render() }
-        }
-        timer?.tolerance = 2
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(woke), name: NSWorkspace.didWakeNotification, object: nil)
-        for name in [NSLocale.currentLocaleDidChangeNotification, NSNotification.Name.NSSystemTimeZoneDidChange] {
+        for name in [NSLocale.currentLocaleDidChangeNotification, NSNotification.Name.NSSystemTimeZoneDidChange, NSNotification.Name.NSSystemClockDidChange] {
             NotificationCenter.default.addObserver(self, selector: #selector(clockChanged), name: name, object: nil)
         }
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(clockChanged), name: NSNotification.Name("AppleTimePreferencesChangedNotification"), object: nil)
@@ -113,7 +109,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard !menuIsOpen else { return }
         let instant = ContinuousClock.now
         let now = Date()
-        let forecast = timeline.forecast(at: instant)
+        let display = timeline.display(at: instant, wallNow: now)
+        displayTimer?.invalidate()
+        displayTimer = nil
+        if let deadline = display.nextUpdate {
+            displayTimer = Timer.scheduledTimer(withTimeInterval: max(0.001, instant.duration(to: deadline).timeInterval), repeats: false) { [weak self] _ in
+                Task { @MainActor in self?.render() }
+            }
+            displayTimer?.tolerance = 2
+        }
+        let forecast = display.forecast
         let age = timeline.age(at: instant)
         let retryAt = refreshGate.nextAttemptDate(at: instant, wallNow: now)
         let presentation = StatusPresentation(forecast: forecast, now: now, age: age, problem: problem, retryAt: retryAt)
@@ -152,6 +157,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func showMenu() {
         guard let button = item.button else { return }
+        displayTimer?.invalidate()
+        displayTimer = nil
         menuIsOpen = true
         defer {
             menuIsOpen = false

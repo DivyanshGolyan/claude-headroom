@@ -223,15 +223,38 @@ enum Forecast: Equatable {
         return max(0, latest.1 - baseline.1) / elapsed
     }
 
+    struct Projection {
+        let forecast: Forecast
+        let nextChange: Date?
+    }
+
+    // Freshness is inclusive at its limit; wake just after strict boundaries.
+    static let boundaryAllowance: TimeInterval = 0.001
+
     static func calculate(samples: [UsageSample], now: Date) -> Forecast {
-        guard let latest = samples.last else { return .estimating }
-        guard (0...maximumSampleAge).contains(now.timeIntervalSince(latest.date)) else { return .stale }
+        project(samples: samples, now: now).forecast
+    }
+
+    static func project(samples: [UsageSample], now: Date) -> Projection {
+        guard let latest = samples.last else { return Projection(forecast: .estimating, nextChange: nil) }
+        if now < latest.date { return Projection(forecast: .stale, nextChange: latest.date) }
+        guard now.timeIntervalSince(latest.date) <= maximumSampleAge else {
+            return Projection(forecast: .stale, nextChange: nil)
+        }
+        var nextChange = latest.date.addingTimeInterval(maximumSampleAge + boundaryAllowance)
+        func consider(_ date: Date) {
+            if date > now { nextChange = min(nextChange, date) }
+        }
+        func result(_ forecast: Forecast) -> Projection {
+            Projection(forecast: forecast, nextChange: nextChange)
+        }
         var gaps: [(Date, Date, String?)] = []
         var sessionSpare: Double?
         var confirmedUntil: Date?
 
         func evaluate(used: Double, reset: Date, duration: TimeInterval, name: String?, observations: [(Date, Double)]) {
             guard reset > now else { return }
+            consider(reset)
             if used >= 100 {
                 confirmedUntil = max(confirmedUntil ?? reset, reset)
                 gaps.append((now, reset, name))
@@ -249,7 +272,9 @@ enum Forecast: Equatable {
             let spare = ((100 - used - burn * horizon) * 1e9).rounded() / 1e9
             if name == nil { sessionSpare = spare }
             if spare < 0, burn > 0 {
-                gaps.append((max(now, latest.date.addingTimeInterval((100 - used) / burn)), reset, name))
+                let exhaustion = latest.date.addingTimeInterval((100 - used) / burn)
+                consider(exhaustion)
+                gaps.append((max(now, exhaustion), reset, name))
             }
         }
 
@@ -274,16 +299,16 @@ enum Forecast: Equatable {
             }
             if gap.0 <= now {
                 let confirmed = confirmedUntil.map { $0 >= gap.1 } ?? false
-                return confirmed ? .out(gap.1, gap.2) : .likelyOut(gap.1, gap.2)
+                return result(confirmed ? .out(gap.1, gap.2) : .likelyOut(gap.1, gap.2))
             }
-            return .gap(gap.0, gap.1, gap.2)
+            return result(.gap(gap.0, gap.1, gap.2))
         }
-        guard let reset = latest.reset else { return .ready }
-        guard reset > now else { return .awaitingUpdate }
-        if latest.used == 0 && sessionSpare == nil { return .ready }
-        guard let spare = sessionSpare else { return .estimating }
-        if spare >= 10 { return .spare(Int(floor(spare / 5)) * 5, reset) }
-        return .onTrack
+        guard let reset = latest.reset else { return result(.ready) }
+        guard reset > now else { return result(.awaitingUpdate) }
+        if latest.used == 0 && sessionSpare == nil { return result(.ready) }
+        guard let spare = sessionSpare else { return result(.estimating) }
+        if spare >= 10 { return result(.spare(Int(floor(spare / 5)) * 5, reset)) }
+        return result(.onTrack)
     }
 
     var isGap: Bool {
