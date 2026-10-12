@@ -11,7 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var timeline = RuntimeTimeline()
     private var refreshGate = RefreshGate()
     private var failures = 0
-    private var problem: String?
+    private var problem: FetchProblem?
     private var problemDetail: String?
     private let historyStore = HistoryStore(url: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Headroom/history.json"))
@@ -74,16 +74,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 nextAttempt = ContinuousClock.now.advanced(by: backoff)
                 switch error {
                 case UsageError.signedOut:
-                    problem = "Signed out"
+                    problem = .signedOut
                     problemDetail = "Sign into Claude Code, then refresh. Headroom does not launch Claude or change credentials."
                     nextAttempt = ContinuousClock.now.advanced(by: .seconds(300))
                 case let UsageError.rateLimited(delay, receivedAt):
-                    problem = "Usage rate limited"
+                    problem = .rateLimited
                     problemDetail = "Claude asked Headroom to wait. Refresh now also respects this cooldown."
                     nextAttempt = receivedAt.advanced(by: max(backoff, delay))
                     rateLimitUntil = nextAttempt
                 default:
-                    problem = "Usage unavailable"
+                    problem = .unavailable
                     problemDetail = (error as? UsageError).flatMap {
                         if case let .message(message) = $0 { return message }
                         return nil
@@ -101,15 +101,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let now = timeline.calendarNow(at: instant)
         let forecast = timeline.forecast(at: instant)
         let age = timeline.age(at: instant)
-        let signedOut = problem == "Signed out"
-        let title = signedOut ? "Signed out" : age > 600 && problem != nil ? "No data" : forecast.title(now: now)
+        let presentation = StatusPresentation(forecast: forecast, now: now, age: age, problem: problem,
+            retryAt: refreshGate.nextAttemptDate(at: instant, wallNow: Date()))
+        let title = presentation.title
         guard let button = item.button else { return }
         if button.title != title { button.title = title }
-        let disabled = !signedOut && age > 180 && age <= 600
+        let disabled = presentation.appearsDisabled
         if button.appearsDisabled != disabled { button.appearsDisabled = disabled }
-        let image = claudeMenuBarImage(warning: !signedOut && forecast.isGap)
+        let image = claudeMenuBarImage(warning: presentation.showsForecast && forecast.isGap)
         if button.image !== image { button.image = image }
-        let width = StatusStyle.width(forecast: signedOut ? .stale : forecast, title: title)
+        let width = StatusStyle.width(forecast: presentation.showsForecast ? forecast : .stale, title: title)
         if item.length != width { item.length = width }
         var detail = "Headroom · Claude quota\nInitial estimate uses average consumption since the quota window began. After a minute of live observations, uses the faster of the last 10 minutes and a 15–60 minute baseline, including idle time. Assumes this pace continues.\n"
         if let last = timeline.history.samples.last {
@@ -125,7 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         detail += "Click for Refresh now, Launch at login, and Quit."
         if button.toolTip != detail { button.toolTip = detail }
-        let label = signedOut ? "Claude is signed out. Sign into Claude Code." : title == "No data" ? "Claude usage data is unavailable." : forecast.accessibilityText
+        let label = presentation.accessibilityText
         if button.accessibilityLabel() != label { button.setAccessibilityLabel(label) }
         let value = age > 180 ? "Last successful update was more than three minutes ago." : ""
         if button.accessibilityValue() as? String != value { button.setAccessibilityValue(value) }
