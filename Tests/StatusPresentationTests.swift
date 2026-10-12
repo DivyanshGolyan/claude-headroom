@@ -15,7 +15,7 @@ enum StatusPresentationTests {
             }
         }
         for age in [0.0, 180, 181, 601, 900] {
-            for forecast in [Forecast.onTrack, .spare(20, retry), .gap(now, retry)] {
+            for forecast in [Forecast.ready, .onTrack, .spare(20, retry), .gap(now, retry), .out(retry)] {
                 for problem in [FetchProblem.rateLimited, .unavailable] {
                     let status = StatusPresentation(forecast: forecast, now: now, age: age,
                         problem: problem, retryAt: retry)
@@ -28,10 +28,15 @@ enum StatusPresentationTests {
                 }
             }
         }
-        for forecast in [Forecast.stale, .estimating] {
-            let status = StatusPresentation(forecast: forecast, now: now, age: 0,
-                problem: .rateLimited, retryAt: retry)
-            precondition(status.title.hasPrefix("Rate limited") && !status.showsForecast)
+        for forecast in [Forecast.stale, .estimating, .awaitingReset] {
+            for age in [0.0, 180, 900] {
+                for problem in [FetchProblem.rateLimited, .unavailable] {
+                    let status = StatusPresentation(forecast: forecast, now: now, age: age,
+                        problem: problem, retryAt: retry)
+                    precondition(!status.showsForecast && !status.appearsDisabled)
+                    precondition(problem == .rateLimited ? status.title.hasPrefix("Rate limited") : status.title == "Usage unavailable")
+                }
+            }
         }
         let missingDeadline = StatusPresentation(forecast: .stale, now: now, age: .infinity,
             problem: .rateLimited, retryAt: nil)

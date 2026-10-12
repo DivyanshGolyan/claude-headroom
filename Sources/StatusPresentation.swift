@@ -11,7 +11,14 @@ struct StatusPresentation {
     let appearsDisabled: Bool
 
     init(forecast: Forecast, now: Date, age: TimeInterval, problem: FetchProblem?, retryAt: Date?) {
-        let canForecast = (0...Forecast.maximumSampleAge).contains(age) && forecast != .stale && forecast != .estimating
+        let hasCurrentWindow: Bool
+        switch forecast {
+        case .ready, .onTrack, .gap, .out, .spare:
+            hasCurrentWindow = true
+        case .estimating, .awaitingReset, .stale:
+            hasCurrentWindow = false
+        }
+        let canForecast = hasCurrentWindow && (0...Forecast.maximumSampleAge).contains(age)
         let rateLimitDetail = problem == .rateLimited ? "Claude usage updates are rate limited." + (retryAt.map {
             " Next automatic attempt is \($0.formatted(date: .omitted, time: .standard))."
         } ?? "") : ""
