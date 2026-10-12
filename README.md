@@ -50,6 +50,8 @@ For the calculation, quota coverage, and local data location, read [Forecasting]
 
 For a Homebrew installation, update with `brew upgrade --cask DivyanshGolyan/headroom/headroom`, or remove with `brew uninstall --cask DivyanshGolyan/headroom/headroom`.
 
+Current Homebrew versions quit Headroom before upgrading and reopen it after a successful upgrade if it was running beforehand. Leave it running when you start the upgrade; an app that was already closed stays closed.
+
 For a downloaded installation, quit Headroom and replace the app with the new download. To remove it, turn off **Launch at login**, quit, and move Headroom to Trash. Its optional history file is at `~/Library/Application Support/Headroom/history.json`.
 
 [MIT license](LICENSE). Independent project; not affiliated with Anthropic. [Logo attribution](THIRD_PARTY_NOTICES.md).
