@@ -70,3 +70,13 @@ git push origin main v1.1.0
 ```
 
 The GitHub workflow tests both architectures, checks that the tag matches the bundle version, packages the universal app, and publishes the release files and checksums. It uses GitHub's workflow token; no signing secrets are required. First-launch approval is expected because releases are ad-hoc signed and not Apple-notarized. Follow the README's per-app approval steps; packaging does not change system security settings.
+
+After publishing, the Homebrew job downloads that exact release's ZIP and checksum file, verifies the archive, and updates `DivyanshGolyan/homebrew-headroom`. Its SSH deploy key can write only to that tap; the private key is stored in the app repository's `HEADROOM_TAP_DEPLOY_KEY` Actions secret. The updater rejects downgrades and changed checksums for an existing version. Identical retries make no commit.
+
+If the release exists but tap publication fails, retry the failed Homebrew job or run the same workflow independently:
+
+```sh
+gh workflow run homebrew.yml --field tag=v1.2.0
+```
+
+This does not rebuild the app or recreate the release. `Tests/test_homebrew_release.py` checks archive verification, version ordering, and retry behavior without network access.

@@ -10,6 +10,14 @@ See when your Claude quota will run out, or how much will go unused before reset
 
 Requires macOS 13 or later, on Apple Silicon or Intel, and [Claude Code](https://code.claude.com/docs/en/quickstart) signed in to your Claude subscription. An API key alone won't work. Xcode is needed only to build from source.
 
+With Homebrew:
+
+```sh
+brew install --cask DivyanshGolyan/headroom/headroom
+```
+
+Then open Headroom from Applications. Or install the download:
+
 1. Download **Headroom.dmg**, open it, and drag **Headroom** into **Applications**. You can use `~/Applications` if you prefer a per-user installation. A [ZIP download](https://github.com/DivyanshGolyan/claude-headroom/releases/latest/download/Headroom.zip) is also available.
 2. Open Headroom. It appears in the menu bar, with no Dock icon or app window.
 3. If macOS blocks the first launch, go to **System Settings → Privacy & Security → Open Anyway**, then open it again. Releases are locally signed, not Apple-notarized. [Apple explains this approval](https://support.apple.com/en-us/102445).
@@ -40,6 +48,8 @@ For the calculation, quota coverage, and local data location, read [Forecasting]
 
 ## Update or remove
 
-To update, quit Headroom and replace the app with the new download. To remove it, turn off **Launch at login**, quit, and move Headroom to Trash. Its optional history file is at `~/Library/Application Support/Headroom/history.json`.
+For a Homebrew installation, update with `brew upgrade --cask DivyanshGolyan/headroom/headroom`, or remove with `brew uninstall --cask DivyanshGolyan/headroom/headroom`.
+
+For a downloaded installation, quit Headroom and replace the app with the new download. To remove it, turn off **Launch at login**, quit, and move Headroom to Trash. Its optional history file is at `~/Library/Application Support/Headroom/history.json`.
 
 [MIT license](LICENSE). Independent project; not affiliated with Anthropic. [Logo attribution](THIRD_PARTY_NOTICES.md).

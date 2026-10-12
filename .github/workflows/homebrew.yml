@@ -1,0 +1,55 @@
+name: Publish Homebrew cask
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Published release tag
+        required: true
+        type: string
+    secrets:
+      HEADROOM_TAP_DEPLOY_KEY:
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag (for example v1.2.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  homebrew:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: headroom-homebrew
+      cancel-in-progress: false
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p build/homebrew-artifacts
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease > build/homebrew-artifacts/release.json
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern Headroom.zip --pattern SHA256SUMS --dir build/homebrew-artifacts
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: DivyanshGolyan/homebrew-headroom
+          path: homebrew-tap
+          ssh-key: ${{ secrets.HEADROOM_TAP_DEPLOY_KEY }}
+      - name: Update pinned cask
+        run: python3 scripts/update-homebrew-cask.py --version "$RELEASE_TAG" --metadata build/homebrew-artifacts/release.json --checksums build/homebrew-artifacts/SHA256SUMS --archive build/homebrew-artifacts/Headroom.zip --output homebrew-tap/Casks/headroom.rb
+      - name: Commit and push cask
+        working-directory: homebrew-tap
+        run: |
+          if git diff --quiet && test -z "$(git ls-files --others --exclude-standard)"; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Casks/headroom.rb
+          git commit -m "Update Headroom to $RELEASE_TAG"
+          git push origin HEAD:main

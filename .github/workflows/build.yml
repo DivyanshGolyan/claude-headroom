@@ -51,4 +51,14 @@ jobs:
 
           `Headroom.zip` is an alternative to the disk image. `SHA256SUMS` contains download checksums.
           NOTES
-          gh release create "$GITHUB_REF_NAME" build/Headroom.dmg build/Headroom.zip build/SHA256SUMS --verify-tag --title "Headroom $GITHUB_REF_NAME" --notes-file build/release-notes.md
+          gh release create "$GITHUB_REF_NAME" build/Headroom.dmg build/Headroom.zip build/SHA256SUMS --verify-tag --title "Headroom $GITHUB_REF_NAME" --generate-notes --notes-file build/release-notes.md
+
+  homebrew:
+    name: Publish Homebrew cask
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    uses: ./.github/workflows/homebrew.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets:
+      HEADROOM_TAP_DEPLOY_KEY: ${{ secrets.HEADROOM_TAP_DEPLOY_KEY }}
