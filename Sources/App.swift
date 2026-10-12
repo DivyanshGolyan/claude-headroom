@@ -15,7 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var problemDetail: String?
     private var signInAttempts = SignInAttempts()
     private var loginRefreshPending = false
-    private var loginRefreshTimer: Timer?
+    private var fetchTimer: Timer?
     private let historyStore = HistoryStore(url: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Headroom/history.json"))
 
@@ -40,7 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.button?.setAccessibilityLabel("Claude usage forecast")
         render()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            Task { @MainActor in self?.render() }
         }
         timer?.tolerance = 2
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(woke), name: NSWorkspace.didWakeNotification, object: nil)
@@ -63,10 +63,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func fetch(manual: Bool) {
         render()
-        guard refreshGate.begin(at: ContinuousClock.now, manual: manual || loginRefreshPending) else { return }
+        guard refreshGate.begin(at: ContinuousClock.now, manual: manual || loginRefreshPending) else {
+            scheduleRefresh()
+            return
+        }
         loginRefreshPending = false
-        loginRefreshTimer?.invalidate()
-        loginRefreshTimer = nil
+        fetchTimer?.invalidate()
+        fetchTimer = nil
         Task {
             var nextAttempt: ContinuousClock.Instant?
             var rateLimitUntil: ContinuousClock.Instant?
@@ -74,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let fetched = try await client.fetch()
                 timeline.record(fetched)
                 failures = 0
-                nextAttempt = nil
+                nextAttempt = fetched.receivedAt.advanced(by: RefreshGate.automaticInterval)
                 problem = nil
                 problemDetail = nil
                 saveHistory()
@@ -90,7 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 case let UsageError.rateLimited(delay, receivedAt):
                     problem = .rateLimited
                     problemDetail = "Claude asked Headroom to wait. Refresh now also respects this cooldown."
-                    nextAttempt = receivedAt.advanced(by: max(backoff, delay))
+                    nextAttempt = receivedAt.advanced(by: delay ?? backoff)
                     rateLimitUntil = nextAttempt
                 default:
                     problem = .unavailable
@@ -102,7 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             refreshGate.finish(nextAttempt: nextAttempt, rateLimitUntil: rateLimitUntil)
             render()
-            if loginRefreshPending { scheduleLoginRefresh() }
+            scheduleRefresh()
         }
     }
 
@@ -139,7 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if button.toolTip != detail { button.toolTip = detail }
         let label = presentation.accessibilityText
         if button.accessibilityLabel() != label { button.setAccessibilityLabel(label) }
-        let value = age > 180 ? "Last successful update was more than three minutes ago." : ""
+        let value = age > StatusPresentation.dimAfter ? "Last successful update was more than six minutes ago." : ""
         if button.accessibilityValue() as? String != value { button.setAccessibilityValue(value) }
     }
 
@@ -209,17 +212,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
               signInAttempts.finish(.init(attemptID: attemptID, succeeded: succeeded)) else { return }
         failures = 0
         loginRefreshPending = true
-        scheduleLoginRefresh()
+        scheduleRefresh()
     }
 
-    private func scheduleLoginRefresh() {
-        guard loginRefreshPending, !refreshGate.busy else { return }
+    private func scheduleRefresh() {
+        guard !refreshGate.busy else { return }
         let now = ContinuousClock.now
-        let delay = now.duration(to: refreshGate.earliestManualAttempt(at: now)).timeInterval
-        if delay <= 0 { fetch(manual: true); return }
-        loginRefreshTimer?.invalidate()
-        loginRefreshTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.scheduleLoginRefresh() }
+        let deadline = loginRefreshPending ? refreshGate.earliestManualAttempt(at: now)
+            : refreshGate.earliestAutomaticAttempt(at: now)
+        let delay = now.duration(to: deadline).timeInterval
+        fetchTimer?.invalidate()
+        fetchTimer = Timer.scheduledTimer(withTimeInterval: max(0.001, delay), repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
         }
     }
     @objc private func quit() { NSApp.terminate(nil) }

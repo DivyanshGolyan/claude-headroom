@@ -105,7 +105,7 @@ struct UsageResponse: Decodable {
 enum UsageError: Error {
     case message(String)
     case signedOut
-    case rateLimited(Duration, receivedAt: ContinuousClock.Instant)
+    case rateLimited(Duration?, receivedAt: ContinuousClock.Instant)
 }
 
 enum Clock {

@@ -5,6 +5,7 @@ enum FetchProblem {
 }
 
 struct StatusPresentation {
+    static let dimAfter: TimeInterval = 6 * 60
     let title: String
     let accessibilityText: String
     let showsForecast: Bool
@@ -40,7 +41,7 @@ struct StatusPresentation {
             accessibilityText = forecast.accessibilityText + (rateLimitDetail.isEmpty ? "" : " " + rateLimitDetail)
             showsForecast = true
         }
-        appearsDisabled = showsForecast && age > 180 && age <= Forecast.maximumSampleAge
+        appearsDisabled = showsForecast && age > Self.dimAfter && age <= Forecast.maximumSampleAge
     }
 
     static func usageDetail(sample: UsageSample?, now: Date) -> String {

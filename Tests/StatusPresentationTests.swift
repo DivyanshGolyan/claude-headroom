@@ -14,13 +14,13 @@ enum StatusPresentationTests {
                 precondition(!status.showsForecast && !status.appearsDisabled)
             }
         }
-        for age in [0.0, 180, 181, 601, 900] {
+        for age in [0.0, 300, 360, 361, 601, 900] {
             for forecast in [Forecast.ready, .onTrack, .spare(20, retry), .gap(now, retry), .out(retry)] {
                 for problem in [FetchProblem.rateLimited, .unavailable] {
                     let status = StatusPresentation(forecast: forecast, now: now, age: age,
                         problem: problem, retryAt: retry)
                     precondition(status.title == forecast.title(now: now), "usable forecasts survive temporary fetch failures")
-                    precondition(status.showsForecast && status.appearsDisabled == (age > 180))
+                    precondition(status.showsForecast && status.appearsDisabled == (age > 360))
                     if problem == .rateLimited {
                         precondition(status.accessibilityText.contains("rate limited"))
                         precondition(status.accessibilityText.contains(Clock.deadline(retry, relativeTo: now, seconds: true)))
@@ -64,7 +64,7 @@ enum StatusPresentationTests {
         precondition(signedOut.title == "Sign-in needed" && !signedOut.showsForecast)
         let unavailable = StatusPresentation(forecast: .stale, now: now, age: .infinity, problem: .unavailable, retryAt: retry)
         precondition(unavailable.title == "Usage unavailable" && !unavailable.showsForecast)
-        let transient = StatusPresentation(forecast: .onTrack, now: now, age: 181, problem: .unavailable, retryAt: retry)
+        let transient = StatusPresentation(forecast: .onTrack, now: now, age: 361, problem: .unavailable, retryAt: retry)
         precondition(transient.title == "On track" && transient.appearsDisabled)
         let iso = ISO8601DateFormatter()
         let reference = iso.date(from: "2026-10-12T11:55:00Z")!

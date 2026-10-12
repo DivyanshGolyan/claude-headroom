@@ -23,8 +23,7 @@ import Foundation
             precondition(!gate.begin(at: instant(899), manual: true))
             precondition(gate.begin(at: instant(900), manual: true))
             gate.finish()
-            precondition(!gate.begin(at: instant(914), manual: true))
-            precondition(gate.begin(at: instant(915), manual: true))
+            precondition(gate.begin(at: instant(900), manual: true))
             gate.finish()
             precondition(gate.begin(at: instant(7200)), "Sleep-sized elapsed advance must expire cooldowns without consulting wall time")
 
@@ -61,22 +60,23 @@ import Foundation
             precondition(HTTPDate.retryDelay("120", serverDate: nil, localDate: server.addingTimeInterval(shift)) == .seconds(120))
         }
         precondition(HTTPDate.retryDelay("Mon, 12 Oct 2026 12:05:00 GMT", serverDate: nil, localDate: server) == .seconds(300))
-        precondition(HTTPDate.retryDelay("0", serverDate: server, localDate: wall) == .seconds(60))
-        precondition(HTTPDate.retryDelay("Mon, 12 Oct 2026 11:00:00 GMT", serverDate: server, localDate: wall) == .seconds(60))
+        precondition(HTTPDate.retryDelay("0", serverDate: server, localDate: wall) == .zero)
+        precondition(HTTPDate.retryDelay("7", serverDate: server, localDate: wall) == .seconds(7))
+        precondition(HTTPDate.retryDelay("Mon, 12 Oct 2026 11:00:00 GMT", serverDate: server, localDate: wall) == .zero)
         for invalid: String? in [nil, "", "NaN", "inf", "-1", "1.5", "1e5", "garbage", "Mon, 99 Oct 2026 12:00:00 GMT", String(repeating: "9", count: 400)] {
-            precondition(HTTPDate.retryDelay(invalid, serverDate: server, localDate: wall) == .seconds(300))
+            precondition(HTTPDate.retryDelay(invalid, serverDate: server, localDate: wall) == nil)
         }
         let huge = HTTPDate.retryDelay(String(repeating: "9", count: 200), serverDate: server, localDate: wall)
-        precondition(huge == .seconds(300), "Unrepresentable finite cooldowns are invalid, not lifetime lockouts")
+        precondition(huge == nil, "Unrepresentable finite cooldowns are invalid, not lifetime lockouts")
         let largest = HTTPDate.retryDelay(String(Int32.max), serverDate: server, localDate: wall)
         precondition(largest == .seconds(Int32.max))
-        let hugeDeadline = start.advanced(by: largest)
+        let hugeDeadline = start.advanced(by: largest!)
         precondition(hugeDeadline > start, "Finite malicious cooldowns must remain representable as native deadlines")
         precondition(HTTPDate.parse("Mon, 12 Oct 2026 12:00:00 GMT trailing") == nil)
-        precondition(HTTPDate.retryDelay("Fri, 31 Dec 9999 23:59:59 GMT", serverDate: server, localDate: wall) == .seconds(300))
+        precondition(HTTPDate.retryDelay("Fri, 31 Dec 9999 23:59:59 GMT", serverDate: server, localDate: wall) == nil)
         let delayedError = UsageError.rateLimited(.seconds(120), receivedAt: start)
         if case let .rateLimited(delay, receipt) = delayedError {
-            precondition(receipt.advanced(by: delay) == instant(120), "MainActor delay cannot re-anchor a server cooldown")
+            precondition(receipt.advanced(by: delay!) == instant(120), "MainActor delay cannot re-anchor a server cooldown")
         } else { preconditionFailure() }
         print("PASS HTTP retry durations use receipt and server time, validate finite numeric values, and fall back safely")
 
