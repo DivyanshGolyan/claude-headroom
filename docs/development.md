@@ -16,6 +16,17 @@ open build/Headroom.app
 
 `test.sh` checks forecast boundaries, burst detection, resets, counter corrections, missed observations, overlapping weekly outages, response decoding, clock formatting, VoiceOver wording, tabular digits, and stable widths across times and weekdays. Clock-domain tests advance continuous instants independently of calendar dates to check clock jumps, sleep, cooldowns, freshness, HTTP retry dates, server jitter, and stale cache restoration. Tests use synthetic quota data and do not access Keychain or the network. CI runs on Apple Silicon and Intel macOS 15 runners. Other supported macOS versions have not been exercised in CI.
 
+## Check dropdown alignment
+
+To check dropdown alignment in a logged-in desktop session, run:
+
+```sh
+swiftc -swift-version 5 Sources/StatusMenu.swift Tests/StatusMenuTests.swift -o build/status-menu-tests
+build/status-menu-tests
+```
+
+This briefly opens native menus at three button widths and checks their screen coordinates, minimum width, and highlight lifecycle. It requires a visible menu-bar item and runs separately from the headless test suite.
+
 ## Measure CPU work
 
 ```sh

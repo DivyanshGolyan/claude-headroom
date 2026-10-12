@@ -4,6 +4,8 @@ import ServiceManagement
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var item: NSStatusItem!
+    private let menu = NSMenu()
+    private var menuIsOpen = false
     private var timer: Timer?
     private let client = UsageClient()
     private var timeline = RuntimeTimeline()
@@ -23,10 +25,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.button?.image = claudeMenuBarImage()
         item.button?.imagePosition = .imageLeading
         item.button?.imageHugsTitle = true
-        let menu = NSMenu()
         menu.delegate = self
         menu.autoenablesItems = false
-        item.menu = menu
+        item.button?.target = self
+        item.button?.action = #selector(showMenu)
+        item.button?.sendAction(on: [.leftMouseDown, .rightMouseDown])
         item.button?.setAccessibilityLabel("Claude usage forecast")
         render()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
@@ -93,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func render() {
+        guard !menuIsOpen else { return }
         let instant = ContinuousClock.now
         let now = timeline.calendarNow(at: instant)
         let forecast = timeline.forecast(at: instant)
@@ -131,8 +135,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         try? historyStore.save(timeline.snapshot)
     }
 
+    @objc private func showMenu() {
+        guard let button = item.button else { return }
+        menuIsOpen = true
+        defer {
+            menuIsOpen = false
+            render()
+        }
+        StatusMenu.present(menu, from: button)
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
-        render()
         menu.removeAllItems()
         let detail: String
         if let last = timeline.history.samples.last, let reset = last.reset {
